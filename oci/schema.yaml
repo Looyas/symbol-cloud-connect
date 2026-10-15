@@ -1,0 +1,290 @@
+# OCI Resource Manager form for the Symbol Cloud Connect stack.
+# Reference: https://docs.oracle.com/en-us/iaas/Content/ResourceManager/Concepts/terraformconfigresourcemanager_topic-schema.htm
+#
+# Values in the "Symbol" group arrive pre-filled from the Symbol link (zipUrlVariables).
+# The schema language has no read-only attribute, so they stay visible for review and are
+# labelled "do not change"; Symbol rejects a connection code whose keys/session do not
+# match the session that produced the link.
+
+title: "Symbol Cloud Connect for OCI"
+description: "Connects this OCI tenancy to Symbol: user sign-in, FinOps, Monitoring and Security scanning. Only public material comes in; only identifiers go out."
+stackDescription: "Symbol Cloud Connect (symbol-cloud-connect, oci-v1.0.0). Destroy this stack to revoke Symbol's access."
+informationalText: "Review the Plan before applying: every resource and policy statement is listed. When the Apply job succeeds, copy the connection code from the Application information tab into Symbol."
+schemaVersion: 1.1.0
+version: "20261015"
+locale: "en"
+
+variableGroups:
+  - title: "Symbol (pre-filled - do not change)"
+    variables:
+      - ${symbol_org_id}
+      - ${setup_session_id}
+      - ${template_version}
+      - ${enable_signin}
+      - ${enable_finops}
+      - ${enable_monitoring}
+      - ${enable_security}
+      - ${symbol_egress_cidrs}
+      - ${signin_auth_method}
+      - ${symbol_issuer}
+      - ${redirect_uri}
+      - ${symbol_ipt_certificate_url}
+      - ${symbol_ipt_certificate_pem}
+      - ${symbol_client_cert_url}
+      - ${symbol_client_cert_pem}
+      - ${finops_public_key_url}
+      - ${finops_public_key_pem}
+      - ${observability_public_key_url}
+      - ${observability_public_key_pem}
+
+  - title: "Your tenancy"
+    variables:
+      - ${identity_domain_id}
+      - ${monitoring_compartment_id}
+      - ${create_cloud_guard}
+      - ${extra_event_types}
+      - ${scan_compartment_id}
+
+  - title: "Injected by Resource Manager"
+    visible: false
+    variables:
+      - ${tenancy_ocid}
+      - ${region}
+      - ${user_ocid}
+      - ${fingerprint}
+      - ${private_key_path}
+      - ${current_user_ocid}
+
+variables:
+  # --- Symbol -----------------------------------------------------------------
+  symbol_org_id:
+    type: string
+    title: "Symbol organisation"
+    description: "Pre-filled by Symbol. Do not change."
+    required: true
+
+  setup_session_id:
+    type: string
+    title: "Setup session"
+    description: "Pre-filled by Symbol. The connection code is only accepted for this session. Do not change."
+    pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    required: true
+
+  template_version:
+    type: string
+    title: "Template version"
+    description: "Version of this stack. Do not change."
+    required: true
+
+  enable_signin:
+    type: boolean
+    title: "User sign-in"
+    description: "Create the 'Symbol Integration' application and the 'Symbol-Trust' Identity Propagation Trust. Users keep their own OCI permissions."
+    default: false
+
+  enable_finops:
+    type: boolean
+    title: "FinOps"
+    description: "Create the symbol-finops service identity with read-only access to cost reports, inventory and Cloud Advisor."
+    default: false
+
+  enable_monitoring:
+    type: boolean
+    title: "Monitoring"
+    description: "Create a stream fed by Cloud Guard problems and let symbol-observability read it."
+    default: false
+
+  enable_security:
+    type: boolean
+    title: "Security scanning"
+    description: "Let symbol-observability inspect the configuration for CIS checks (read/inspect only)."
+    default: false
+
+  symbol_egress_cidrs:
+    type: array
+    title: "Symbol egress IPs"
+    description: "Symbol service identities only work from these addresses (network source 'symbol'). Pre-filled by Symbol."
+    items:
+      type: string
+      pattern: "^([0-9]{1,3}\\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$"
+    visible:
+      or:
+        - ${enable_finops}
+        - ${enable_monitoring}
+        - ${enable_security}
+
+  signin_auth_method:
+    type: enum
+    title: "Sign-in client authentication"
+    description: "Pre-filled by Symbol. CLIENT_SECRET: you paste the application's client secret into Symbol once. CLIENT_ASSERTION: Symbol authenticates with its certificate, no secret."
+    enum:
+      - CLIENT_SECRET
+      - CLIENT_ASSERTION
+    default: CLIENT_SECRET
+    required: true
+    visible: ${enable_signin}
+
+  symbol_issuer:
+    type: string
+    title: "Symbol token issuer"
+    description: "Pre-filled by Symbol. Do not change."
+    visible: ${enable_signin}
+
+  redirect_uri:
+    type: string
+    title: "Symbol redirect URI"
+    description: "The only redirect URI allowed on the application. Pre-filled by Symbol."
+    visible: ${enable_signin}
+
+  symbol_ipt_certificate_url:
+    type: string
+    title: "Symbol trust certificate URL"
+    description: "Public certificate that verifies Symbol broker tokens. Pre-filled by Symbol."
+    visible: ${enable_signin}
+
+  symbol_ipt_certificate_pem:
+    type: text
+    multiline: true
+    title: "Symbol trust certificate (PEM, optional)"
+    description: "Only if the URL above cannot be reached: paste the certificate here."
+    visible: ${enable_signin}
+
+  symbol_client_cert_url:
+    type: string
+    title: "Symbol client certificate URL"
+    description: "Certificate Symbol uses to authenticate the application (client assertion). Pre-filled by Symbol."
+    visible:
+      and:
+        - ${enable_signin}
+        - eq:
+            - ${signin_auth_method}
+            - CLIENT_ASSERTION
+
+  symbol_client_cert_pem:
+    type: text
+    multiline: true
+    title: "Symbol client certificate (PEM, optional)"
+    description: "Only if the URL above cannot be reached: paste the certificate here."
+    visible:
+      and:
+        - ${enable_signin}
+        - eq:
+            - ${signin_auth_method}
+            - CLIENT_ASSERTION
+
+  finops_public_key_url:
+    type: string
+    title: "symbol-finops public key URL"
+    description: "Public half of the key pair Symbol generated for this setup. The private key never leaves Symbol."
+    visible: ${enable_finops}
+
+  finops_public_key_pem:
+    type: text
+    multiline: true
+    title: "symbol-finops public key (PEM, optional)"
+    description: "Only if the URL above cannot be reached."
+    visible: ${enable_finops}
+
+  observability_public_key_url:
+    type: string
+    title: "symbol-observability public key URL"
+    description: "Public half of the key pair Symbol generated for this setup. The private key never leaves Symbol."
+    visible:
+      or:
+        - ${enable_monitoring}
+        - ${enable_security}
+
+  observability_public_key_pem:
+    type: text
+    multiline: true
+    title: "symbol-observability public key (PEM, optional)"
+    description: "Only if the URL above cannot be reached."
+    visible:
+      or:
+        - ${enable_monitoring}
+        - ${enable_security}
+
+  # --- Your tenancy -------------------------------------------------------------
+  identity_domain_id:
+    type: oci:identity:domains:id
+    title: "Identity domain of your users"
+    description: "The domain your users sign in with. The Symbol application and trust are created in it."
+    dependsOn:
+      compartmentId: ${tenancy_ocid}
+    visible: ${enable_signin}
+
+  monitoring_compartment_id:
+    type: oci:identity:compartment:id
+    title: "Compartment for the monitoring stream"
+    description: "Where the symbol-monitoring stream pool and stream are created. Leave empty for the root compartment."
+    visible: ${enable_monitoring}
+
+  create_cloud_guard:
+    type: enum
+    title: "Cloud Guard"
+    description: "auto: enable Cloud Guard (Oracle-managed recipes on the root compartment) only if it is not in use yet; an existing Cloud Guard setup is never modified. never: leave Cloud Guard alone."
+    enum:
+      - auto
+      - never
+    default: auto
+    required: true
+    visible: ${enable_monitoring}
+
+  extra_event_types:
+    type: array
+    title: "Additional event types (optional)"
+    description: "Other OCI event types to forward to Symbol, e.g. com.oraclecloud.cloudguard.problemdismissed."
+    items:
+      type: string
+    visible: ${enable_monitoring}
+
+  scan_compartment_id:
+    type: oci:identity:compartment:id
+    title: "Limit security scanning to a compartment (optional)"
+    description: "Leave empty to scan the whole tenancy. Identity checks (users, groups) need the whole tenancy."
+    visible: ${enable_security}
+
+  # --- Injected -----------------------------------------------------------------
+  tenancy_ocid:
+    type: string
+    title: "Tenancy"
+    required: true
+
+  region:
+    type: oci:identity:region:name
+    title: "Region"
+    required: true
+
+  user_ocid:
+    type: string
+    title: "User (local runs only)"
+
+  fingerprint:
+    type: string
+    title: "Fingerprint (local runs only)"
+
+  private_key_path:
+    type: string
+    title: "Private key path (local runs only)"
+
+  current_user_ocid:
+    type: string
+    title: "Current user"
+
+outputs:
+  symbol_connection_code:
+    type: copyableString
+    title: "Symbol connection code"
+    description: "Paste this code into Symbol. It contains identifiers only, no secret."
+    visible: true
+
+  symbol_connection_summary:
+    type: string
+    title: "What was configured"
+    visible: true
+
+outputGroups:
+  - title: "Connect to Symbol"
+    outputs:
+      - ${symbol_connection_code}
+      - ${symbol_connection_summary}

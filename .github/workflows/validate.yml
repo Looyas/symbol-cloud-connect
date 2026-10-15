@@ -1,0 +1,75 @@
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: oci
+    strategy:
+      matrix:
+        # 1.5.7 = what OCI Resource Manager runs; 1.9.8 runs the mocked `terraform test`.
+        terraform: ["1.5.7", "1.9.8"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ matrix.terraform }}
+          terraform_wrapper: false
+
+      - name: fmt
+        run: terraform fmt -check -recursive -diff
+
+      - name: init
+        run: terraform init -backend=false -input=false
+
+      - name: validate
+        run: terraform validate
+
+      - name: test (mocked providers)
+        if: matrix.terraform != '1.5.7'
+        run: terraform test
+
+  tflint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+        with:
+          tflint_version: v0.64.0
+
+      - name: tflint
+        working-directory: oci
+        run: |
+          tflint --config="$GITHUB_WORKSPACE/.tflint.hcl" --init
+          tflint --config="$GITHUB_WORKSPACE/.tflint.hcl" --recursive --format compact
+
+  checkov:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: checkov
+        run: |
+          python3 -m pip install --quiet "checkov==3.3.19"
+          checkov --directory oci --framework terraform --compact --quiet
+
+  package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: package (dry run with the version declared in variables.tf)
+        run: |
+          version="$(awk '/variable "template_version"/{f=1} f && /default/{gsub(/[" ]/,"",$0); split($0,a,"="); print a[2]; exit}' oci/variables.tf)"
+          bash scripts/package.sh "$version"

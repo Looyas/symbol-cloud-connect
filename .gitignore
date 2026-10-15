@@ -1,0 +1,14 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfplan
+
+# Local variables (may contain key paths)
+terraform.tfvars
+*.auto.tfvars
+
+# Build output
+dist/

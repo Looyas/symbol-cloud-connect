@@ -1,0 +1,31 @@
+# Example values for a local plan against a TEST tenancy. All values are fake.
+# Copy to terraform.tfvars (git-ignored, never shipped in the release zip).
+# In Resource Manager these come from the Symbol link and the form instead.
+
+tenancy_ocid     = "ocid1.tenancy.oc1..aaaaaaaaexampletenancy0000000000000000000000000000000000"
+region           = "eu-frankfurt-1"
+user_ocid        = "ocid1.user.oc1..aaaaaaaaexampleuser000000000000000000000000000000000000000"
+fingerprint      = "12:34:56:78:9a:bc:de:f0:12:34:56:78:9a:bc:de:f0"
+private_key_path = "~/.oci/oci_api_key.pem"
+
+# From the Symbol link
+symbol_org_id                = "org_example"
+setup_session_id             = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
+symbol_issuer                = "https://platform.example.com/"
+redirect_uri                 = "https://platform.example.com/callback"
+symbol_ipt_certificate_url   = "https://platform.example.com/api/CloudProfile-Service/.well-known/symbol/oci/ipt-cert.pem"
+finops_public_key_url        = "https://platform.example.com/api/cloud-connections/setup/public/sessions/3f2504e0-4f89-41d3-9a0c-0305e82c3301/keys/finops.pem"
+observability_public_key_url = "https://platform.example.com/api/cloud-connections/setup/public/sessions/3f2504e0-4f89-41d3-9a0c-0305e82c3301/keys/observability.pem"
+symbol_egress_cidrs          = ["203.0.113.10/32", "203.0.113.11/32"]
+enable_signin                = true
+enable_finops                = true
+enable_monitoring            = true
+enable_security              = true
+signin_auth_method           = "CLIENT_SECRET"
+
+# From the form
+identity_domain_id        = "ocid1.domain.oc1..aaaaaaaaexampledomain0000000000000000000000000000000000"
+monitoring_compartment_id = ""
+scan_compartment_id       = ""
+extra_event_types         = []
+create_cloud_guard        = "auto"

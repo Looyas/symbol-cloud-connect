@@ -59,12 +59,17 @@ variable "freeform_tags" {
   description = "Contract tags."
 }
 
+# Read only when a domain was picked. With an empty id the provider fails on the request
+# itself ("can not marshal ... DomainId ... nil pointer") BEFORE the root precondition
+# ("pick the identity domain ...") can report the real cause -- seen in Resource Manager
+# when the form's domain dropdown is left empty.
 data "oci_identity_domain" "this" {
+  count     = var.identity_domain_id != "" ? 1 : 0
   domain_id = var.identity_domain_id
 }
 
 locals {
-  idcs_endpoint    = data.oci_identity_domain.this.url
+  idcs_endpoint    = try(data.oci_identity_domain.this[0].url, "")
   client_assertion = var.auth_method == "CLIENT_ASSERTION"
   # The domain URL is returned with an explicit :443; the connection code carries the
   # canonical form https://idcs-<id>.identity.oraclecloud.com (contract §2 / plan §4.5).

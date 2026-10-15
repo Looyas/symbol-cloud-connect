@@ -8,7 +8,7 @@
 
 title: "Symbol Cloud Connect for OCI"
 description: "Connects this OCI tenancy to Symbol: user sign-in, FinOps, Monitoring and Security scanning. Only public material comes in; only identifiers go out."
-stackDescription: "Symbol Cloud Connect (symbol-cloud-connect, oci-v1.0.0). Destroy this stack to revoke Symbol's access."
+stackDescription: "Symbol Cloud Connect (symbol-cloud-connect, oci-v1.0.1). Destroy this stack to revoke Symbol's access."
 informationalText: "Review the Plan before applying: every resource and policy statement is listed. When the Apply job succeeds, copy the connection code from the Application information tab into Symbol."
 schemaVersion: 1.1.0
 version: "20261015"

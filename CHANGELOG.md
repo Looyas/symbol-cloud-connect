@@ -4,6 +4,18 @@ Template versions follow `oci-v<MAJOR>.<MINOR>.<PATCH>`. Releases are immutable;
 publishes `symbol-oci-stack-vX.Y.Z.zip` and its SHA-256. Any change to a policy statement
 is listed here under **Permissions**.
 
+## oci-v1.0.1
+
+### Fixed
+- **signin**: the identity domain is only read when one is selected. With the form's
+  domain dropdown left empty, the provider failed with
+  `can not marshal ... DomainId ... nil pointer` before the precondition could explain
+  the cause; the plan now stops with "Sign-in is enabled: pick the identity domain your
+  users sign in with (identity_domain_id)".
+
+### Permissions
+- No change.
+
 ## oci-v1.0.0
 
 First release.

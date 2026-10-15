@@ -80,7 +80,7 @@ variable "setup_session_id" {
 
 variable "template_version" {
   type        = string
-  default     = "oci-v1.0.0"
+  default     = "oci-v1.0.1"
   description = "Version of this template. Hard-coded to the release; scripts/package.sh refuses to build if it differs from the tag."
 
   validation {

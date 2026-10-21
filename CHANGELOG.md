@@ -4,6 +4,23 @@ Template versions follow `oci-v<MAJOR>.<MINOR>.<PATCH>`. Releases are immutable;
 publishes `symbol-oci-stack-vX.Y.Z.zip` and its SHA-256. Any change to a policy statement
 is listed here under **Permissions**.
 
+## oci-v1.0.4
+
+### Fixed
+- **finops / observability**: `symbol-finops` and `symbol-observability` are now
+  **API-key-only users** instead of OCI *service users*. A service user gets no API key
+  capability: OCI refuses to grant it (`400 Attribute '...capabilities:User:canUseApiKeys'
+  is not allowed to be set on a Service User`) and refuses the key itself (`You can not
+  create ApiKey for this user`). Up to oci-v1.0.3, `CreateUser` therefore failed for both
+  identities in every tenancy, so FinOps, Monitoring and Security could not be set up.
+- The users still have **no password and no console access**: no password is set, and the
+  capabilities extension turns off every credential type except API keys (console
+  password, auth tokens, customer secret keys, DB credentials, OAuth client credentials,
+  SMTP). No welcome mail is sent.
+
+### Permissions
+- No change.
+
 ## oci-v1.0.3
 
 ### Fixed

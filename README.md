@@ -12,7 +12,7 @@ certificates and egress IPs. Only identifiers come out: the **connection code**.
 | `monitoring` | Stream pool, stream and Events rule `symbol-monitoring-*`, policy `symbol-events-policy`, Cloud Guard **only if it is not already in use** | Cloud Guard problems in Symbol |
 | `security` | Read/inspect statements for `symbol-observability` | CIS security scan |
 
-Service identities (`symbol-finops`, `symbol-observability`) are **service users** in your
+Service identities (`symbol-finops`, `symbol-observability`) are **API-key-only users** in your
 Default identity domain: no password and no console access. Each gets a primary email
 `<user>@<service_user_email_domain>` (default `noreply.symbole.ai`; no mail is sent). They work **only from Symbol's
 egress IPs**, through the network source `symbol`. Every statement is listed in

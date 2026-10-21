@@ -200,6 +200,46 @@ run "all_modules" {
     condition     = length(module.observability[0].policy_statements) == 17
     error_message = "Observability policy must have 2 monitoring + 16 security statements, deduplicated (read cloud-guard-family once)."
   }
+
+  assert {
+    condition     = module.finops[0].email == "symbol-finops@noreply.symbole.ai" && module.observability[0].email == "symbol-observability@noreply.symbole.ai"
+    error_message = "Service users must get a primary email: domains require one by default (CreateUser 400)."
+  }
+}
+
+run "custom_service_user_email_domain" {
+  command = plan
+
+  providers = {
+    oci      = oci.mock
+    oci.home = oci.mock
+    http     = http
+  }
+
+  variables {
+    service_user_email_domain = "it.acme.example"
+  }
+
+  assert {
+    condition     = module.finops[0].email == "symbol-finops@it.acme.example" && module.observability[0].email == "symbol-observability@it.acme.example"
+    error_message = "service_user_email_domain must be used for both service users."
+  }
+}
+
+run "bad_service_user_email_domain_rejected" {
+  command = plan
+
+  providers = {
+    oci      = oci.mock
+    oci.home = oci.mock
+    http     = http
+  }
+
+  variables {
+    service_user_email_domain = "symbol@acme.example"
+  }
+
+  expect_failures = [var.service_user_email_domain]
 }
 
 run "finops_only" {

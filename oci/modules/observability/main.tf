@@ -33,6 +33,11 @@ variable "network_source_name" {
   description = "Name of the Symbol network source."
 }
 
+variable "service_user_email_domain" {
+  type        = string
+  description = "Domain of the service user's primary email (symbol-observability@<domain>)."
+}
+
 variable "enable_monitoring" {
   type        = bool
   description = "Grant the monitoring statements."
@@ -108,6 +113,7 @@ module "identity" {
   description    = "Symbol observability service identity (Cloud Guard monitoring and security scans). Managed by the symbol-cloud-connect stack."
   idcs_endpoint  = var.idcs_endpoint
   public_key_pem = var.public_key_pem
+  email          = "symbol-observability@${var.service_user_email_domain}"
   freeform_tags  = var.freeform_tags
 }
 
@@ -129,6 +135,11 @@ resource "oci_identity_policy" "observability" {
 output "user_ocid" {
   description = "OCID of symbol-observability."
   value       = module.identity.user_ocid
+}
+
+output "email" {
+  description = "Primary email of symbol-observability."
+  value       = module.identity.email
 }
 
 output "fingerprint" {

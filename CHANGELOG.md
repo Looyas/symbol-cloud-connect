@@ -4,6 +4,25 @@ Template versions follow `oci-v<MAJOR>.<MINOR>.<PATCH>`. Releases are immutable;
 publishes `symbol-oci-stack-vX.Y.Z.zip` and its SHA-256. Any change to a policy statement
 is listed here under **Permissions**.
 
+## oci-v1.0.3
+
+### Fixed
+- **finops / observability**: the service users `symbol-finops` and `symbol-observability`
+  are created with a **primary email**. Identity domains require one by default
+  (*Primary email address required*), and the Apply failed with
+  `400-BadErrorResponse ... CreateUser` in every such domain.
+  The address is `<user>@<service_user_email_domain>`.
+
+### Added
+- Variable **`service_user_email_domain`** (default `noreply.symbole.ai`), shown in the
+  *Your tenancy* group. No mail is sent to these addresses (notifications are bypassed);
+  an organisation whose policy requires its own domain sets it here. The email is set when
+  the users are created only: upgrading a stack applied with an earlier release changes no
+  existing user.
+
+### Permissions
+- No change.
+
 ## oci-v1.0.2
 
 ### Changed

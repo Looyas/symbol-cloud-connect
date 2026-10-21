@@ -82,11 +82,12 @@ module "finops" {
   count     = var.enable_finops ? 1 : 0
   providers = { oci = oci.home }
 
-  tenancy_ocid        = var.tenancy_ocid
-  idcs_endpoint       = local.default_domain_url
-  public_key_pem      = local.finops_public_key_pem
-  network_source_name = module.network[0].name
-  freeform_tags       = local.freeform_tags
+  tenancy_ocid              = var.tenancy_ocid
+  idcs_endpoint             = local.default_domain_url
+  public_key_pem            = local.finops_public_key_pem
+  network_source_name       = module.network[0].name
+  service_user_email_domain = var.service_user_email_domain
+  freeform_tags             = local.freeform_tags
 }
 
 module "observability" {
@@ -102,6 +103,7 @@ module "observability" {
   enable_security           = var.enable_security
   monitoring_compartment_id = local.monitoring_compartment
   scan_compartment_id       = local.scan_compartment
+  service_user_email_domain = var.service_user_email_domain
   freeform_tags             = local.freeform_tags
 }
 

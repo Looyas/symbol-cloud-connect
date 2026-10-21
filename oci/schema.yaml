@@ -8,10 +8,10 @@
 
 title: "Symbol Cloud Connect for OCI"
 description: "Connects this OCI tenancy to Symbol: user sign-in, FinOps, Monitoring and Security scanning. Only public material comes in; only identifiers go out."
-stackDescription: "Symbol Cloud Connect (symbol-cloud-connect, oci-v1.0.2). Destroy this stack to revoke Symbol's access."
+stackDescription: "Symbol Cloud Connect (symbol-cloud-connect, oci-v1.0.3). Destroy this stack to revoke Symbol's access."
 informationalText: "Review the Plan before applying: every resource and policy statement is listed. When the Apply job succeeds, copy the connection code from the Application information tab into Symbol."
 schemaVersion: 1.1.0
-version: "20261015"
+version: "20261021"
 locale: "en"
 
 variableGroups:
@@ -44,6 +44,7 @@ variableGroups:
       - ${create_cloud_guard}
       - ${extra_event_types}
       - ${scan_compartment_id}
+      - ${service_user_email_domain}
 
   - title: "Removing Symbol"
     variables:
@@ -248,6 +249,19 @@ variables:
     items:
       type: string
     visible: ${enable_monitoring}
+
+  service_user_email_domain:
+    type: string
+    title: "Email domain of Symbol's service users"
+    description: "Your identity domain requires a primary email for every user by default. symbol-finops and symbol-observability get <name>@<this domain>. No mail is ever sent to them. Keep the default, or use one of your own domains if your policy requires it."
+    default: "noreply.symbole.ai"
+    pattern: "^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
+    required: true
+    visible:
+      or:
+        - ${enable_finops}
+        - ${enable_monitoring}
+        - ${enable_security}
 
   scan_compartment_id:
     type: oci:identity:compartment:id

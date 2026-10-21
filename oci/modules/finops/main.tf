@@ -33,6 +33,11 @@ variable "network_source_name" {
   description = "Name of the Symbol network source (output of the network module)."
 }
 
+variable "service_user_email_domain" {
+  type        = string
+  description = "Domain of the service user's primary email (symbol-finops@<domain>)."
+}
+
 variable "freeform_tags" {
   type        = map(string)
   description = "Contract tags."
@@ -74,6 +79,7 @@ module "identity" {
   description    = "Symbol FinOps service identity (cost reports, inventory, Cloud Advisor). Managed by the symbol-cloud-connect stack."
   idcs_endpoint  = var.idcs_endpoint
   public_key_pem = var.public_key_pem
+  email          = "symbol-finops@${var.service_user_email_domain}"
   freeform_tags  = var.freeform_tags
 }
 
@@ -88,6 +94,11 @@ resource "oci_identity_policy" "finops" {
 output "user_ocid" {
   description = "OCID of symbol-finops."
   value       = module.identity.user_ocid
+}
+
+output "email" {
+  description = "Primary email of symbol-finops."
+  value       = module.identity.email
 }
 
 output "fingerprint" {

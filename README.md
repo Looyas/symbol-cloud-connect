@@ -13,7 +13,8 @@ certificates and egress IPs. Only identifiers come out: the **connection code**.
 | `security` | Read/inspect statements for `symbol-observability` | CIS security scan |
 
 Service identities (`symbol-finops`, `symbol-observability`) are **service users** in your
-Default identity domain: no password and no console access. They work **only from Symbol's
+Default identity domain: no password and no console access. Each gets a primary email
+`<user>@<service_user_email_domain>` (default `noreply.symbole.ai`; no mail is sent). They work **only from Symbol's
 egress IPs**, through the network source `symbol`. Every statement is listed in
 [PERMISSIONS.md](PERMISSIONS.md). The trust model is in [SECURITY.md](SECURITY.md).
 

@@ -80,7 +80,7 @@ variable "setup_session_id" {
 
 variable "template_version" {
   type        = string
-  default     = "oci-v1.0.2"
+  default     = "oci-v1.0.3"
   description = "Version of this template. Hard-coded to the release; scripts/package.sh refuses to build if it differs from the tag."
 
   validation {
@@ -271,6 +271,17 @@ variable "monitoring_compartment_id" {
   validation {
     condition     = var.monitoring_compartment_id == "" || can(regex("^ocid1\\.(compartment|tenancy)\\.[a-z0-9-]+\\.[a-z0-9-]*\\.[a-z0-9]+$", var.monitoring_compartment_id))
     error_message = "monitoring_compartment_id must be empty or a compartment/tenancy OCID."
+  }
+}
+
+variable "service_user_email_domain" {
+  type        = string
+  default     = "noreply.symbole.ai"
+  description = "Domain of the primary email given to the symbol-finops and symbol-observability service users (symbol-finops@<domain>). Identity domains require one by default. No mail is ever sent to these addresses; use your own domain if your policy requires it. Only used when the users are created."
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$", var.service_user_email_domain))
+    error_message = "service_user_email_domain must be a domain name such as noreply.example.com (no @, no scheme)."
   }
 }
 

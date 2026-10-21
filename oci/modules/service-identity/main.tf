@@ -44,6 +44,11 @@ variable "public_key_pem" {
   description = "Symbol-generated RSA public key (PEM) uploaded as the user's API key."
 }
 
+variable "email" {
+  type        = string
+  description = "Primary email of the service user. Identity domains require one by default (Primary email address required); no mail is sent to it (bypass_notification)."
+}
+
 variable "freeform_tags" {
   type        = map(string)
   description = "Contract tags (applied through the OCI tags SCIM extension)."
@@ -61,6 +66,14 @@ resource "oci_identity_domains_user" "this" {
   name {
     given_name  = "Symbol"
     family_name = var.name
+  }
+
+  # Without a primary email, CreateUser fails with 400 in every domain where "Primary
+  # email address required" is on -- the default for identity domains.
+  emails {
+    type    = "work"
+    value   = var.email
+    primary = true
   }
 
   urnietfparamsscimschemasoracleidcsextensionuser_user {
@@ -90,8 +103,10 @@ resource "oci_identity_domains_user" "this" {
 
   lifecycle {
     # The service returns extra extension URNs in `schemas`; ignoring them avoids a
-    # permanent diff (pattern from the provider's own examples).
-    ignore_changes = [schemas]
+    # permanent diff (pattern from the provider's own examples). `emails`: the email is
+    # only set at creation -- the service adds a `recovery` copy of the primary address,
+    # and a user created by an earlier release without one must not be rewritten.
+    ignore_changes = [schemas, emails]
   }
 }
 
@@ -159,4 +174,9 @@ output "group_name" {
 output "fingerprint" {
   description = "Fingerprint of the uploaded API key (aa:bb:...). Symbol checks it against the key pair it generated."
   value       = oci_identity_domains_api_key.this.fingerprint
+}
+
+output "email" {
+  description = "Primary email the service user was created with."
+  value       = var.email
 }

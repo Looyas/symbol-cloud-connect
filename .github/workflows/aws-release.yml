@@ -1,0 +1,128 @@
+name: aws-release
+
+# Publishes the AWS templates of a protected tag aws-vX.Y.Z to Symbol's S3 bucket:
+#   s3://<SYMBOL_TEMPLATES_BUCKET>/aws/aws-vX.Y.Z/symbol-aws-stack.yaml
+#   s3://<SYMBOL_TEMPLATES_BUCKET>/aws/aws-vX.Y.Z/symbol-aws-regional-forwarder.yaml
+# Releases are immutable: every object is written with If-None-Match: * (S3 conditional
+# write), so an existing key makes the job fail, and the bucket policy refuses any PutObject
+# without that header. AWS access goes through GitHub OIDC; no key is stored.
+#
+# Repository variables: SYMBOL_TEMPLATES_BUCKET, SYMBOL_TEMPLATES_REGION, SYMBOL_RELEASE_ROLE_ARN.
+on:
+  push:
+    tags: ["aws-v*"]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: aws-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CFN_GUARD_VERSION: "3.2.0"
+  CFN_GUARD_SHA256: "9f8c4d9f15f7dd54a37ea70a5237ba00aba682fb1e6521a744d12259961dfc13"
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: check the tag and the template carry the same version
+        env:
+          BUCKET: ${{ vars.SYMBOL_TEMPLATES_BUCKET }}
+          REGION: ${{ vars.SYMBOL_TEMPLATES_REGION }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          [[ "$tag" =~ ^aws-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad tag $tag" >&2; exit 1; }
+          [[ -n "$BUCKET" && -n "$REGION" ]] || { echo "set SYMBOL_TEMPLATES_BUCKET and SYMBOL_TEMPLATES_REGION" >&2; exit 1; }
+          default="$(awk '/^  TemplateVersion:/{f=1} f && /Default:/{print $2; exit}' aws/symbol-aws-stack.yaml)"
+          [[ "$default" == "$tag" ]] || { echo "TemplateVersion default is '$default', expected '$tag'" >&2; exit 1; }
+          grep -q "(${tag})" aws/symbol-aws-stack.yaml || { echo "stack Description does not name $tag" >&2; exit 1; }
+          grep -q "(${tag})" aws/symbol-aws-regional-forwarder.yaml || { echo "forwarder Description does not name $tag" >&2; exit 1; }
+          grep -q "^## ${tag}\$" aws/CHANGELOG.md || { echo "aws/CHANGELOG.md has no '## ${tag}' entry" >&2; exit 1; }
+          base="https://${BUCKET}.s3.${REGION}.amazonaws.com/aws"
+          grep -q "TemplatesBaseUrl: \"${base}\"" aws/symbol-aws-stack.yaml || {
+            echo "Mappings Symbol.Release.TemplatesBaseUrl must be ${base}" >&2; exit 1; }
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+
+      - name: install test dependencies
+        run: python -m pip install --quiet -r aws/tests/requirements.txt
+
+      - name: install cfn-guard (pinned, checksum verified)
+        run: |
+          url="https://github.com/aws-cloudformation/cloudformation-guard/releases/download/${CFN_GUARD_VERSION}/cfn-guard-v3-x86_64-ubuntu-latest.tar.gz"
+          curl -sSLf -o /tmp/cfn-guard.tgz "$url"
+          echo "${CFN_GUARD_SHA256}  /tmp/cfn-guard.tgz" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf /tmp/cfn-guard.tgz -C /tmp
+          install -m 0755 /tmp/cfn-guard-v3-x86_64-ubuntu-latest/cfn-guard "$HOME/.local/bin/cfn-guard"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: cfn-lint
+        run: cfn-lint --include-checks I -- aws/symbol-aws-stack.yaml aws/symbol-aws-regional-forwarder.yaml
+
+      - name: cfn-guard
+        run: |
+          cfn-guard validate --rules aws/tests/guard/symbol.guard \
+            --data aws/symbol-aws-stack.yaml --data aws/symbol-aws-regional-forwarder.yaml
+
+      - name: pytest
+        working-directory: aws/tests
+        run: python -m pytest -q -rs
+
+      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ vars.SYMBOL_RELEASE_ROLE_ARN }}
+          role-session-name: symbol-cloud-connect-${{ github.run_id }}
+          aws-region: ${{ vars.SYMBOL_TEMPLATES_REGION }}
+
+      - name: upload (never overwrites)
+        env:
+          BUCKET: ${{ vars.SYMBOL_TEMPLATES_BUCKET }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          for file in symbol-aws-stack.yaml symbol-aws-regional-forwarder.yaml; do
+            key="aws/${tag}/${file}"
+            sha_b64="$(openssl dgst -sha256 -binary "aws/${file}" | base64)"
+            # --if-none-match '*': S3 answers 412 PreconditionFailed if the key exists.
+            aws s3api put-object \
+              --bucket "$BUCKET" --key "$key" --body "aws/${file}" \
+              --content-type "application/x-yaml" --cache-control "public, max-age=31536000, immutable" \
+              --checksum-algorithm SHA256 --checksum-sha256 "$sha_b64" \
+              --if-none-match '*' >/dev/null
+            echo "uploaded s3://${BUCKET}/${key}"
+          done
+
+      - name: SHA-256 for SETUP_TEMPLATE_REGISTRY.aws
+        env:
+          BUCKET: ${{ vars.SYMBOL_TEMPLATES_BUCKET }}
+          REGION: ${{ vars.SYMBOL_TEMPLATES_REGION }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          base="https://${BUCKET}.s3.${REGION}.amazonaws.com/aws/${tag}"
+          stack_sha="$(sha256sum aws/symbol-aws-stack.yaml | cut -d' ' -f1)"
+          fwd_sha="$(sha256sum aws/symbol-aws-regional-forwarder.yaml | cut -d' ' -f1)"
+          # Read back what S3 serves and compare.
+          [[ "$(curl -sSLf "${base}/symbol-aws-stack.yaml" | sha256sum | cut -d' ' -f1)" == "$stack_sha" ]]
+          [[ "$(curl -sSLf "${base}/symbol-aws-regional-forwarder.yaml" | sha256sum | cut -d' ' -f1)" == "$fwd_sha" ]]
+          {
+            echo "### ${tag}"
+            echo
+            echo "| file | SHA-256 |"
+            echo "|---|---|"
+            echo "| \`${base}/symbol-aws-stack.yaml\` | \`${stack_sha}\` |"
+            echo "| \`${base}/symbol-aws-regional-forwarder.yaml\` | \`${fwd_sha}\` |"
+            echo
+            echo '```json'
+            echo "\"${tag}\": {\"artifact_url\": \"${base}/symbol-aws-stack.yaml\", \"forwarder_url\": \"${base}/symbol-aws-regional-forwarder.yaml\", \"sha256\": \"${stack_sha}\", \"source_url\": \"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/tree/${tag}/aws\"}"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"

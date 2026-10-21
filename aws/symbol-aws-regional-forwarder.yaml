@@ -1,0 +1,102 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Symbol Cloud Connect for AWS (aws-v1.0.0) - regional event forwarder. Forwards this Region's
+  CloudTrail, GuardDuty, Security Hub and Config events to the us-east-1 default event bus,
+  where the Symbol stack's rule delivers them to Symbol's queue. Launch once per Region you
+  use (not in us-east-1). Source: https://github.com/Looyas/symbol-cloud-connect/tree/aws-v1.0.0/aws
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Symbol (pre-filled - do not change)"
+        Parameters:
+          - SymbolOrgId
+          - TargetEventBusArn
+    ParameterLabels:
+      SymbolOrgId:
+        default: "Symbol organisation id"
+      TargetEventBusArn:
+        default: "us-east-1 default event bus of this account"
+
+Parameters:
+  SymbolOrgId:
+    Type: String
+    AllowedPattern: "^[A-Za-z0-9_-]{1,44}$"
+    ConstraintDescription: "1-44 characters: letters, digits, '_' or '-'. Filled in by Symbol."
+    Description: "Your Symbol organisation (same value as in the main Symbol stack)."
+  TargetEventBusArn:
+    Type: String
+    AllowedPattern: "^arn:aws(-[a-z]+)*:events:us-east-1:\\d{12}:event-bus/default$"
+    ConstraintDescription: "arn:aws:events:us-east-1:<this account>:event-bus/default"
+    Description: >-
+      The us-east-1 default event bus of THIS account (output MonitoringEventBusArn of the main
+      Symbol stack).
+
+Rules:
+  NotInUsEast1:
+    Assertions:
+      - Assert: !Not [!Equals [!Ref "AWS::Region", us-east-1]]
+        AssertDescription: >-
+          The main Symbol stack already covers us-east-1. Switch the console to the Region you
+          want to forward (for example eu-west-1) and launch this template there.
+
+Resources:
+  ForwarderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: !Sub "Symbol: lets the ${AWS::Region} rule symbol-monitoring-${SymbolOrgId} put events on the us-east-1 default bus."
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Sub "arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/symbol-monitoring-${SymbolOrgId}"
+              StringEquals:
+                aws:SourceAccount: !Ref "AWS::AccountId"
+      Policies:
+        - PolicyName: symbol-forward-to-us-east-1
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: PutEventsOnTheUsEast1DefaultBus
+                Effect: Allow
+                Action: events:PutEvents
+                Resource: !Ref TargetEventBusArn
+      Tags:
+        - Key: symbol-managed
+          Value: "true"
+        - Key: symbol-org
+          Value: !Ref SymbolOrgId
+
+  ForwarderRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "symbol-monitoring-${SymbolOrgId}"
+      Description: "Symbol monitoring: forwards this Region's matching events to the us-east-1 default bus."
+      EventBusName: default
+      State: ENABLED
+      # Same pattern as the main stack's rule (monitoring-service parse_aws families).
+      EventPattern:
+        detail-type:
+          - "AWS API Call via CloudTrail"
+          - "GuardDuty Finding"
+          - "Security Hub Findings - Imported"
+          - "Config Rules Compliance Change"
+      Targets:
+        - Id: symbol-us-east-1-default-bus
+          Arn: !Ref TargetEventBusArn
+          RoleArn: !GetAtt ForwarderRole.Arn
+
+Outputs:
+  ForwarderRuleArn:
+    Description: "The forwarding rule in this Region."
+    Value: !GetAtt ForwarderRule.Arn
+  TargetEventBusArn:
+    Description: "Where the events go."
+    Value: !Ref TargetEventBusArn

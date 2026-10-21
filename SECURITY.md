@@ -72,8 +72,8 @@ The private halves of the API keys are never in the state: only the public keys 
 To verify a download yourself:
 
 ```bash
-curl -LO https://github.com/Looyas/symbol-cloud-connect/releases/download/oci-v1.0.1/symbol-oci-stack-v1.0.1.zip
-curl -LO https://github.com/Looyas/symbol-cloud-connect/releases/download/oci-v1.0.1/symbol-oci-stack-v1.0.1.zip.sha256
+curl -LO https://github.com/Looyas/symbol-cloud-connect/releases/download/oci-v1.0.2/symbol-oci-stack-v1.0.2.zip
+curl -LO https://github.com/Looyas/symbol-cloud-connect/releases/download/oci-v1.0.2/symbol-oci-stack-v1.0.2.zip.sha256
 sha256sum -c symbol-oci-stack-v1.0.0.zip.sha256
 ```
 

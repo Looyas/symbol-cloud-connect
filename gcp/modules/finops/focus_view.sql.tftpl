@@ -1,0 +1,143 @@
+-- gcp_focus_v1: FOCUS v1.0 view of the Cloud Billing detailed usage cost export, for Symbol.
+-- Managed by symbol-cloud-connect (modules/finops). Holds no data; safe to delete.
+--
+-- Base: Google's "BigQuery view and Looker template for FOCUS v1.0 GA" (query of
+-- 2024-06-20, guide of 2024-08-09, https://cloud.google.com/resources/google-cloud-focus).
+-- Column NAMES are the ones Symbol's ingestion reads (finops-module/ingestion-service/
+-- transformers/gcp_transformer.py); column SEMANTICS follow Google's GA view except:
+--   * SubAccountId/SubAccountName = project id/name. Symbol's readers (cloud-api-rec
+--     location discovery, budget-system scopes) treat a GCP sub-account as a project.
+--     Google's GA view moved SubAccountId to the billing account.
+--   * Region, UsageQuantity, UsageUnit, Provider, Publisher, CommitmentDiscountType keep
+--     the FOCUS v1.0-preview names the reader expects (GA: RegionId, ConsumedQuantity,
+--     ConsumedUnit, ProviderName, PublisherName; CommitmentDiscountType was dropped).
+--   * Tags is a JSON object {"labels":[{key,value}],"resource_tags":[{key,value,
+--     inherited,namespace}],"project_labels":[{key,value}]}: the shape Symbol's tag
+--     rollups read. Google's GA view emits an ARRAY<STRUCT> the reader would discard.
+--   * ChargeCategory / PricingCategory use the FOCUS spec casing (Usage, Tax,
+--     Adjustment; Standard, Committed); Google's view is lower-case.
+--   * BillingPeriodEnd is the exclusive end (first instant of the next month, FOCUS
+--     v1.0 definition); Google's view uses the last day of the month at 00:00.
+--   * PricingQuantity/PricingUnit = usage.amount_in_pricing_units / usage.pricing_unit
+--     (the purchased volume, FOCUS definition); Google's view uses the tier unit size
+--     price.pricing_unit_quantity.
+--   * ListUnitPrice and ServiceCategory are NULL: Google takes them from the separate
+--     Price Export at a hard-coded date; v1 does not require the Price Export.
+--   * BillingAccountName, ChargeFrequency, InvoiceIssuer are NULL (Google provides none).
+--   * Quantities use SAFE_CAST so one out-of-range usage amount cannot fail ingestion.
+--   * ChargeClass and the FOCUS 1.1+ columns are omitted: the reader hard-codes them.
+--   * gcp_* columns are Google-specific extras Symbol stores as provider details.
+WITH usage_cost_data AS (
+  SELECT
+    *,
+    (
+      SELECT AS STRUCT c.type, c.id, c.full_name
+      FROM UNNEST(credits) AS c
+      WHERE c.type IN ("COMMITTED_USAGE_DISCOUNT", "COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE")
+      LIMIT 1
+    ) AS cud,
+    IFNULL((SELECT SUM(CAST(c.amount AS NUMERIC)) FROM UNNEST(credits) AS c), 0) AS credits_total
+  FROM `${project}.${dataset}.${source_table}`
+)
+SELECT
+  -- Account
+  "${billing_account_id}" AS BillingAccountId,
+  CAST(NULL AS STRING) AS BillingAccountName,
+  project.id AS SubAccountId,
+  project.name AS SubAccountName,
+
+  -- Cost
+  CAST(cost AS NUMERIC) + credits_total AS BilledCost,
+  CAST(cost AS NUMERIC) + credits_total AS EffectiveCost,
+  CAST(cost_at_list AS NUMERIC) AS ListCost,
+  CAST(NULL AS NUMERIC) AS ListUnitPrice,
+  currency AS BillingCurrency,
+
+  -- Usage
+  IF(cost_type = "regular", SAFE_CAST(usage.amount AS NUMERIC), NULL) AS UsageQuantity,
+  IF(cost_type = "regular", usage.unit, NULL) AS UsageUnit,
+
+  -- Charge
+  CASE LOWER(cost_type)
+    WHEN "regular" THEN "Usage"
+    WHEN "tax" THEN "Tax"
+    WHEN "rounding_error" THEN "Adjustment"
+    WHEN "adjustment" THEN "Adjustment"
+  END AS ChargeCategory,
+  sku.description AS ChargeDescription,
+  CAST(NULL AS STRING) AS ChargeFrequency,
+
+  -- Timeframe (Cloud Billing closes months in US Pacific time)
+  PARSE_TIMESTAMP("%Y%m", invoice.month, "America/Los_Angeles") AS BillingPeriodStart,
+  TIMESTAMP(DATE_ADD(PARSE_DATE("%Y%m", invoice.month), INTERVAL 1 MONTH), "America/Los_Angeles") AS BillingPeriodEnd,
+  usage_start_time AS ChargePeriodStart,
+  usage_end_time AS ChargePeriodEnd,
+
+  -- Origination
+  CAST(NULL AS STRING) AS InvoiceIssuer,
+  "Google Cloud" AS Provider,
+  IF(transaction_type = "GOOGLE", "Google Cloud", seller_name) AS Publisher,
+
+  -- Pricing
+  IF(
+    cost_type = "regular",
+    IF(LOWER(sku.description) LIKE "commitment%" OR cud IS NOT NULL, "Committed", "Standard"),
+    NULL
+  ) AS PricingCategory,
+  IF(cost_type = "regular", SAFE_CAST(usage.amount_in_pricing_units AS NUMERIC), NULL) AS PricingQuantity,
+  IF(cost_type = "regular", usage.pricing_unit, NULL) AS PricingUnit,
+
+  -- Commitment discounts
+  CASE cud.type
+    WHEN "COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE" THEN "Spend"
+    WHEN "COMMITTED_USAGE_DISCOUNT" THEN "Usage"
+  END AS CommitmentDiscountCategory,
+  subscription.instance_id AS CommitmentDiscountId,
+  cud.full_name AS CommitmentDiscountName,
+  cud.type AS CommitmentDiscountType,
+
+  -- Service and SKU
+  CAST(NULL AS STRING) AS ServiceCategory,
+  service.description AS ServiceName,
+  IF(cost_type = "regular", sku.id, NULL) AS SkuId,
+  IF(
+    cost_type = "regular",
+    CONCAT(
+      "Billing Account ID:", billing_account_id,
+      ", SKU ID: ", sku.id,
+      ", Price Tier Start Amount: ", CAST(price.tier_start_amount AS STRING)
+    ),
+    NULL
+  ) AS SkuPriceId,
+
+  -- Resource and location
+  resource.global_name AS ResourceId,
+  resource.name AS ResourceName,
+  IF(
+    STARTS_WITH(resource.global_name, "//"),
+    REGEXP_REPLACE(
+      resource.global_name,
+      r"(//)|(googleapis.com/)|(projects/[^/]+/)|(project_commitments/[^/]+/)|(locations/[^/]+/)|(regions/[^/]+/)|(zones/[^/]+/)|(global/)|(/[^/]+)",
+      ""
+    ),
+    NULL
+  ) AS ResourceType,
+  location.zone AS AvailabilityZone,
+  location.region AS Region,
+
+  -- Tags (JSON text; see header)
+  TO_JSON_STRING(STRUCT(
+    ARRAY(SELECT AS STRUCT l.key AS key, l.value AS value FROM UNNEST(labels) AS l) AS labels,
+    ARRAY(SELECT AS STRUCT t.key AS key, t.value AS value, t.inherited AS inherited, t.namespace AS namespace FROM UNNEST(tags) AS t) AS resource_tags,
+    ARRAY(SELECT AS STRUCT pl.key AS key, pl.value AS value FROM UNNEST(project.labels) AS pl) AS project_labels
+  )) AS Tags,
+
+  -- Google-specific extensions (stored by Symbol as provider details)
+  project.number AS gcp_ProjectNumber,
+  service.id AS gcp_ServiceId,
+  cost_type AS gcp_CostType,
+  location.location AS gcp_Location,
+  credits_total AS gcp_CreditsAmount,
+  currency_conversion_rate AS gcp_CurrencyConversionRate,
+  export_time AS gcp_ExportTime
+FROM usage_cost_data

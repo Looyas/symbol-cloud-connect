@@ -386,3 +386,138 @@ run "client_assertion" {
     error_message = "Client certificate must be passed as base64 DER."
   }
 }
+
+# A domain set up with the earlier manual guide already has a trust for Symbol's issuer:
+# the stack must reuse it and its app instead of creating a duplicate (409 otherwise).
+run "reuses_an_existing_trust" {
+  command = plan
+
+  providers = {
+    oci      = oci.mock
+    oci.home = oci.mock
+    http     = http
+  }
+
+  override_data {
+    target = module.signin[0].data.oci_identity_domains_identity_propagation_trusts.same_issuer[0]
+    values = {
+      identity_propagation_trusts = [{
+        id                 = "a1b2c3d4e5f60718293a4b5c6d7e8f90"
+        name               = "Symbol-Trust"
+        description        = "Created by hand from the onboarding guide"
+        issuer             = "https://platform.symbole.ai/"
+        active             = true
+        oauth_clients      = ["fedcba98765432100123456789abcdef"]
+        public_certificate = "MIIDdzCCAl+gAwIBAgIEAbCd/+=="
+      }]
+    }
+  }
+
+  override_data {
+    target = module.signin[0].data.oci_identity_domains_apps.existing[0]
+    values = {
+      apps = [{
+        name          = "fedcba98765432100123456789abcdef"
+        redirect_uris = ["https://platform.symbole.ai/callback"]
+      }]
+    }
+  }
+
+  assert {
+    condition     = module.signin[0].reused_existing && local.connection.signin.ipt_id == "a1b2c3d4e5f60718293a4b5c6d7e8f90"
+    error_message = "An existing trust for the issuer must be reused, not duplicated, and its id must reach the connection code."
+  }
+
+  assert {
+    condition     = module.signin[0].reused_existing && module.signin[0].client_id == "fedcba98765432100123456789abcdef" && module.signin[0].ipt_id == "a1b2c3d4e5f60718293a4b5c6d7e8f90"
+    error_message = "The connection code must carry the reused trust id and its app's client id."
+  }
+}
+
+# The stack's OWN trust (re-plan of an applied stack) must stay managed, never be
+# mistaken for a foreign one -- that would destroy it.
+run "own_trust_is_not_reused" {
+  command = plan
+
+  providers = {
+    oci      = oci.mock
+    oci.home = oci.mock
+    http     = http
+  }
+
+  override_data {
+    target = module.signin[0].data.oci_identity_domains_identity_propagation_trusts.same_issuer[0]
+    values = {
+      identity_propagation_trusts = [{
+        id            = "a1b2c3d4e5f60718293a4b5c6d7e8f90"
+        name          = "Symbol-Trust"
+        description   = "Symbol broker JWT -> UPST token exchange. Managed by the symbol-cloud-connect stack."
+        issuer        = "https://platform.symbole.ai/"
+        active        = true
+        oauth_clients = ["fedcba98765432100123456789abcdef"]
+      }]
+    }
+  }
+
+  assert {
+    condition     = !module.signin[0].reused_existing && module.signin[0].trust_name == "Symbol-Trust"
+    error_message = "The stack's own trust must stay managed."
+  }
+}
+
+run "an_inactive_existing_trust_is_refused" {
+  command = plan
+
+  providers = {
+    oci      = oci.mock
+    oci.home = oci.mock
+    http     = http
+  }
+
+  override_data {
+    target = module.signin[0].data.oci_identity_domains_identity_propagation_trusts.same_issuer[0]
+    values = {
+      identity_propagation_trusts = [{
+        id                 = "a1b2c3d4e5f60718293a4b5c6d7e8f90"
+        name               = "Symbol-Trust"
+        description        = ""
+        issuer             = "https://platform.symbole.ai/"
+        active             = false
+        oauth_clients      = ["fedcba98765432100123456789abcdef"]
+        public_certificate = "MIIDdzCCAl+gAwIBAgIEAbCd/+=="
+      }]
+    }
+  }
+
+  override_data {
+    target = module.signin[0].data.oci_identity_domains_apps.existing[0]
+    values = {
+      apps = [{
+        name          = "fedcba98765432100123456789abcdef"
+        redirect_uris = ["https://platform.symbole.ai/callback"]
+      }]
+    }
+  }
+
+  expect_failures = [terraform_data.preflight]
+}
+
+# Revoking: OCI refuses to delete an active app, so removal starts by deactivating.
+run "prepare_removal_deactivates_sign_in" {
+  command = plan
+
+  providers = {
+    oci      = oci.mock
+    oci.home = oci.mock
+    http     = http
+  }
+
+  variables {
+    prepare_removal = true
+  }
+
+  assert {
+    condition     = !module.signin[0].active
+    error_message = "prepare_removal must deactivate the app and the trust."
+  }
+}

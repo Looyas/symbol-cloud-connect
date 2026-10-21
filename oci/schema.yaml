@@ -8,7 +8,7 @@
 
 title: "Symbol Cloud Connect for OCI"
 description: "Connects this OCI tenancy to Symbol: user sign-in, FinOps, Monitoring and Security scanning. Only public material comes in; only identifiers go out."
-stackDescription: "Symbol Cloud Connect (symbol-cloud-connect, oci-v1.0.1). Destroy this stack to revoke Symbol's access."
+stackDescription: "Symbol Cloud Connect (symbol-cloud-connect, oci-v1.0.2). Destroy this stack to revoke Symbol's access."
 informationalText: "Review the Plan before applying: every resource and policy statement is listed. When the Apply job succeeds, copy the connection code from the Application information tab into Symbol."
 schemaVersion: 1.1.0
 version: "20261015"
@@ -44,6 +44,10 @@ variableGroups:
       - ${create_cloud_guard}
       - ${extra_event_types}
       - ${scan_compartment_id}
+
+  - title: "Removing Symbol"
+    variables:
+      - ${prepare_removal}
 
   - title: "Injected by Resource Manager"
     visible: false
@@ -218,6 +222,13 @@ variables:
     title: "Compartment for the monitoring stream"
     description: "Where the symbol-monitoring stream pool and stream are created. Leave empty for the root compartment."
     visible: ${enable_monitoring}
+
+  prepare_removal:
+    type: boolean
+    title: "Prepare removal (deactivate sign-in)"
+    description: "To revoke Symbol: tick this and Apply -- the Symbol Integration app and the Symbol-Trust trust are deactivated, so sign-in through Symbol stops immediately -- then Destroy. OCI does not delete an active application. Leave unticked otherwise."
+    default: false
+    visible: ${enable_signin}
 
   create_cloud_guard:
     type: enum

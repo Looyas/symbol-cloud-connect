@@ -4,6 +4,33 @@ Template versions follow `oci-v<MAJOR>.<MINOR>.<PATCH>`. Releases are immutable;
 publishes `symbol-oci-stack-vX.Y.Z.zip` and its SHA-256. Any change to a policy statement
 is listed here under **Permissions**.
 
+## oci-v1.0.2
+
+### Changed
+- **signin**: an Identity Propagation Trust that already exists in the domain for Symbol's
+  issuer -- typically the one created with the earlier manual guide -- is **reused**
+  together with the application attached to it. The stack then creates neither the app
+  nor the trust (an identity domain accepts one trust per issuer: creating a second one
+  failed with `409 conflicted state` after two minutes of retries), and Destroy leaves
+  them in place. The stack's own trust (marked in its description) stays managed.
+- The plan stops with a clear message when the reused trust is inactive or has no
+  application attached, and warns when it trusts another certificate or when its app
+  lacks Symbol's redirect URL.
+- Upgrading a stack applied with an earlier release keeps its app and trust
+  (`moved` blocks).
+
+- **Removal**: new **Prepare removal** option (sign-in). OCI refuses to delete an active
+  application, so Destroy failed with `400 ... DeleteApp`. Revoking is now: tick
+  *Prepare removal*, Apply (the app and the trust are deactivated, sign-in stops), then
+  Destroy.
+
+### Fixed
+- A trust with an empty description no longer breaks the plan.
+
+### Permissions
+- No change (reading trusts and apps is covered by the identity-domain administrator
+  role the admin already needs).
+
 ## oci-v1.0.1
 
 ### Fixed

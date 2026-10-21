@@ -1,0 +1,4 @@
+# Local virtualenv and caches of the template tests (not shipped).
+.venv/
+__pycache__/
+.pytest_cache/

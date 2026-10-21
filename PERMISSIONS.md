@@ -1,4 +1,4 @@
-# Permissions granted by the stack (oci-v1.0.1)
+# Permissions granted by the stack (oci-v1.0.2)
 
 All policies are attached to the **root compartment** and created in the **home region**.
 `<C>` stands for `where request.networkSource.name='symbol'`: the statement only applies to

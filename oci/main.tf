@@ -8,6 +8,10 @@
 resource "terraform_data" "preflight" {
   lifecycle {
     precondition {
+      condition     = !var.enable_signin || try(module.signin[0].reuse_problem, "") == ""
+      error_message = try(module.signin[0].reuse_problem, "")
+    }
+    precondition {
       condition     = length(local.enabled_modules) > 0
       error_message = "No module is enabled. Set at least one of enable_signin, enable_finops, enable_monitoring, enable_security (the Symbol link sets them for you)."
     }
@@ -130,6 +134,7 @@ module "signin" {
   auth_method            = var.signin_auth_method
   client_certificate_b64 = local.client_certificate_b64
   freeform_tags          = local.freeform_tags
+  deactivate             = var.prepare_removal
 }
 
 ###############################################################################

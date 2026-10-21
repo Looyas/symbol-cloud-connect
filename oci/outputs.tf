@@ -67,9 +67,13 @@ output "symbol_connection_summary" {
     Tenancy ${var.tenancy_ocid} (realm ${local.realm}), home region ${local.home_region}, stack region ${var.region}
     Modules: ${join(", ", local.enabled_modules)}
     %{~if var.enable_signin}
+    %{~if module.signin[0].reused_existing}
+    Sign-in: REUSED the existing trust "${module.signin[0].trust_name}" and its application (client id ${module.signin[0].client_id}) in ${module.signin[0].domain_url}. Nothing was created for sign-in, and Destroy will not remove them.
+    %{~else}
     Sign-in: app "Symbol Integration" (client id ${module.signin[0].client_id}) and trust "Symbol-Trust" in ${module.signin[0].domain_url}, auth ${var.signin_auth_method}.
+    %{~endif}
     %{~if var.signin_auth_method == "CLIENT_SECRET"}
-      Client secret: NOT in the outputs by design. Copy it from Identity & Security > Domains > (your domain) > Integrated applications > Symbol Integration > OAuth configuration, and paste it into Symbol together with the code.
+      Client secret: NOT in the outputs by design. Copy it from Identity & Security > Domains > (your domain) > Integrated applications > (the application with client id ${module.signin[0].client_id}) > OAuth configuration, and paste it into Symbol together with the code.
     %{~endif}
     %{~endif}
     %{~if var.enable_finops}
@@ -85,6 +89,6 @@ output "symbol_connection_summary" {
     %{~if var.enable_security}
     Security scan scope: ${local.scan_compartment == null ? "whole tenancy" : local.scan_compartment}.
     %{~endif}
-    Service identities only work from Symbol's IPs (network source "symbol"). To revoke everything: Resource Manager > this stack > Destroy.
+    Service identities only work from Symbol's IPs (network source "symbol"). To revoke everything: Resource Manager > this stack > Edit > tick "Prepare removal" > Apply, then Destroy (OCI does not delete an active application).
   EOT
 }

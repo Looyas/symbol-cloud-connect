@@ -1,0 +1,10 @@
+# The root .gitignore excludes lock files (OCI Resource Manager resolves providers itself).
+# The GCP template commits its lock file: `terraform init` in Cloud Shell then verifies the
+# provider packages against these hashes (linux/darwin/windows, amd64/arm64).
+!.terraform.lock.hcl
+
+# Local runs
+symbol.tfplan
+symbol-destroy.tfplan
+__pycache__/
+.pytest_cache/

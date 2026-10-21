@@ -1,0 +1,57 @@
+name: aws-ci
+
+# CloudFormation templates of aws/: cfn-lint, cfn-guard and the offline pytest suite
+# (structure, connection-code rendering for every module combination, discovery function).
+on:
+  pull_request:
+    paths:
+      - "aws/**"
+      - ".github/workflows/aws-*.yml"
+  push:
+    branches: [main]
+    paths:
+      - "aws/**"
+      - ".github/workflows/aws-*.yml"
+
+permissions:
+  contents: read
+
+env:
+  CFN_GUARD_VERSION: "3.2.0"
+  CFN_GUARD_SHA256: "9f8c4d9f15f7dd54a37ea70a5237ba00aba682fb1e6521a744d12259961dfc13"
+
+jobs:
+  templates:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+
+      - name: install test dependencies
+        run: python -m pip install --quiet -r aws/tests/requirements.txt
+
+      - name: install cfn-guard (pinned, checksum verified)
+        run: |
+          url="https://github.com/aws-cloudformation/cloudformation-guard/releases/download/${CFN_GUARD_VERSION}/cfn-guard-v3-x86_64-ubuntu-latest.tar.gz"
+          curl -sSLf -o /tmp/cfn-guard.tgz "$url"
+          echo "${CFN_GUARD_SHA256}  /tmp/cfn-guard.tgz" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf /tmp/cfn-guard.tgz -C /tmp
+          install -m 0755 /tmp/cfn-guard-v3-x86_64-ubuntu-latest/cfn-guard "$HOME/.local/bin/cfn-guard"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: cfn-lint
+        run: cfn-lint --include-checks I -- aws/symbol-aws-stack.yaml aws/symbol-aws-regional-forwarder.yaml
+
+      - name: cfn-guard
+        run: |
+          cfn-guard validate --rules aws/tests/guard/symbol.guard \
+            --data aws/symbol-aws-stack.yaml --data aws/symbol-aws-regional-forwarder.yaml \
+            --show-summary all
+
+      - name: pytest
+        working-directory: aws/tests
+        run: python -m pytest -q -rs

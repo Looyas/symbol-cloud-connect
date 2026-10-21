@@ -55,9 +55,19 @@ To get approval first, run **Plan** and export the job logs, or download the zip
 
 ## Revoking access (Destroy)
 
-**Resource Manager > Stacks > this stack > Destroy** removes everything the stack created:
-users, keys, groups, policies, the network source, the app, the trust, the stream and the
-rule. Symbol's daily health check then marks the integration **Revoked**. Notes:
+Two steps, because OCI refuses to delete an **active** application:
+
+1. **Resource Manager > Stacks > this stack > Edit > Edit stack**, tick **Prepare removal**,
+   save, then **Apply**. The Symbol Integration app and the Symbol-Trust trust are
+   deactivated: sign-in through Symbol stops immediately.
+2. **Destroy**. It removes everything the stack created: users, keys, groups, policies, the
+   network source, the app, the trust, the stream and the rule.
+
+Without step 1, Destroy fails on the app with `400 ... DeleteApp` (the app is still active).
+If that already happened: deactivate the app in the console (Integrated applications >
+Symbol Integration > Deactivate), then run Destroy again.
+
+Symbol's daily health check then marks the integration **Revoked**. Notes:
 
 - Destroy leaves Cloud Guard **enabled**, even when this stack enabled it. Only the
   `symbol-cloud-guard-root` target is removed. Disable Cloud Guard yourself if you want.

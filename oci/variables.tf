@@ -80,7 +80,7 @@ variable "setup_session_id" {
 
 variable "template_version" {
   type        = string
-  default     = "oci-v1.0.1"
+  default     = "oci-v1.0.2"
   description = "Version of this template. Hard-coded to the release; scripts/package.sh refuses to build if it differs from the tag."
 
   validation {
@@ -294,6 +294,12 @@ variable "extra_event_types" {
     condition     = alltrue([for e in var.extra_event_types : can(regex("^com\\.oraclecloud\\.[a-z0-9]+(\\.[a-z0-9_-]+)+$", e))])
     error_message = "Each extra_event_types entry must be an OCI event type such as com.oraclecloud.cloudguard.problemdismissed."
   }
+}
+
+variable "prepare_removal" {
+  type        = bool
+  default     = false
+  description = "Sign-in only. Deactivates the Symbol Integration app and the Symbol-Trust trust (sign-in through Symbol stops at once). OCI refuses to delete an ACTIVE app, so revoking is: tick this, Apply, then Destroy."
 }
 
 variable "create_cloud_guard" {

@@ -1,0 +1,100 @@
+name: gcp-ci
+
+# GCP template (gcp/): fmt, validate (Terraform 1.5 = the minimum symbol-setup.sh
+# accepts, and the version it installs), mocked `terraform test`, the Python
+# cross-checks of the connection code / FOCUS view / setup script, shellcheck, tflint
+# and checkov. No cloud credentials are used anywhere.
+on:
+  pull_request:
+    paths: ["gcp/**", ".github/workflows/gcp-ci.yml", ".tflint.hcl"]
+  push:
+    branches: [main]
+    paths: ["gcp/**", ".github/workflows/gcp-ci.yml", ".tflint.hcl"]
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: gcp
+    strategy:
+      matrix:
+        # 1.5.7: minimum accepted by symbol-setup.sh. 1.16.6: the version it installs
+        # (also runs the mocked tests, which need >= 1.7).
+        terraform: ["1.5.7", "1.16.6"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ matrix.terraform }}
+          terraform_wrapper: false
+
+      - name: fmt
+        run: terraform fmt -check -recursive -diff
+
+      - name: init (lock file enforced)
+        run: terraform init -backend=false -input=false -lockfile=readonly
+
+      - name: validate
+        run: terraform validate
+
+      - name: test (mocked providers)
+        if: matrix.terraform != '1.5.7'
+        run: terraform test
+
+      - name: python cross-checks (connection code, FOCUS columns, setup script)
+        if: matrix.terraform != '1.5.7'
+        env:
+          TERRAFORM: terraform
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet "pytest==8.3.5"
+          "$RUNNER_TEMP/venv/bin/python" -m pytest -q tests
+
+  shellcheck:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: shellcheck
+        run: |
+          shellcheck --version
+          shellcheck -x -S style gcp/symbol-setup.sh
+          bash -n gcp/symbol-setup.sh
+
+      - name: additive IAM only (no *_iam_policy / *_iam_binding)
+        run: |
+          if grep -rEn '^\s*(resource|data)\s+"google_\w+_iam_(policy|binding)"' gcp --include='*.tf'; then
+            echo "Authoritative IAM resources are forbidden: use google_*_iam_member." >&2
+            exit 1
+          fi
+
+  tflint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+        with:
+          tflint_version: v0.64.0
+
+      - name: tflint
+        working-directory: gcp
+        run: |
+          tflint --config="$GITHUB_WORKSPACE/.tflint.hcl" --init
+          tflint --config="$GITHUB_WORKSPACE/.tflint.hcl" --recursive --format compact
+
+  checkov:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: checkov
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet "checkov==3.3.19"
+          "$RUNNER_TEMP/venv/bin/checkov" --directory gcp --framework terraform --compact --quiet

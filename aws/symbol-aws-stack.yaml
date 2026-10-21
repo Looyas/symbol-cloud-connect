@@ -1,0 +1,1074 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Symbol Cloud Connect for AWS (aws-v1.0.0). Creates read-only IAM roles that Symbol assumes
+  with an ExternalId, an optional FOCUS 1.0 Data Export, and an EventBridge-to-SQS monitoring
+  pipe. Launch in us-east-1, in the management (payer) account. Source:
+  https://github.com/Looyas/symbol-cloud-connect/tree/aws-v1.0.0/aws
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Symbol (pre-filled - do not change)"
+        Parameters:
+          - SymbolOrgId
+          - SetupSessionId
+          - TemplateVersion
+          - SymbolPrincipalArn
+          - ExternalId
+          - SymbolEgressCidrs
+      - Label:
+          default: "Modules"
+        Parameters:
+          - EnableSignin
+          - EnableFinops
+          - EnableMonitoring
+          - EnableSecurity
+      - Label:
+          default: "Sign-in (IAM Identity Center)"
+        Parameters:
+          - IdentityCenterRegion
+          - IdentityCenterStartUrl
+      - Label:
+          default: "FinOps (cost and usage)"
+        Parameters:
+          - CreateFocusExport
+          - ExistingExportBucket
+          - ExistingExportPrefix
+          - ExistingExportName
+          - ExportBucketKmsKeyArn
+      - Label:
+          default: "Monitoring"
+        Parameters:
+          - MonitoringQueueRetentionSeconds
+    ParameterLabels:
+      SymbolOrgId:
+        default: "Symbol organisation id"
+      SetupSessionId:
+        default: "Setup session id"
+      TemplateVersion:
+        default: "Template version"
+      SymbolPrincipalArn:
+        default: "Symbol principal ARN (trusted by the roles)"
+      ExternalId:
+        default: "ExternalId (confused-deputy guard)"
+      SymbolEgressCidrs:
+        default: "Symbol egress CIDRs (role calls are accepted only from these)"
+      EnableSignin:
+        default: "Sign-in with IAM Identity Center"
+      EnableFinops:
+        default: "FinOps"
+      EnableMonitoring:
+        default: "Monitoring"
+      EnableSecurity:
+        default: "Security scan"
+      IdentityCenterRegion:
+        default: "Identity Center region (empty = detect)"
+      IdentityCenterStartUrl:
+        default: "AWS access portal URL (empty = detect)"
+      CreateFocusExport:
+        default: "Create a FOCUS 1.0 Data Export and its bucket"
+      ExistingExportBucket:
+        default: "Existing export: S3 bucket"
+      ExistingExportPrefix:
+        default: "Existing export: S3 prefix (no trailing slash)"
+      ExistingExportName:
+        default: "Existing export: export name"
+      ExportBucketKmsKeyArn:
+        default: "KMS key of the export bucket (only if SSE-KMS)"
+      MonitoringQueueRetentionSeconds:
+        default: "Event queue retention (seconds)"
+
+Parameters:
+  # ---------------------------------------------------------------- Symbol (pre-filled)
+  SymbolOrgId:
+    Type: String
+    # IAM role names are limited to 64 characters: "SymbolObservability-" (20) + 44.
+    AllowedPattern: "^[A-Za-z0-9_-]{1,44}$"
+    ConstraintDescription: "1-44 characters: letters, digits, '_' or '-'. Filled in by Symbol."
+    Description: "Your Symbol organisation. Filled in by Symbol's link - do not change."
+  SetupSessionId:
+    Type: String
+    AllowedPattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    ConstraintDescription: "A UUID. Filled in by Symbol."
+    Description: "The Symbol setup session this stack answers. Filled in by Symbol - do not change."
+  TemplateVersion:
+    Type: String
+    Default: aws-v1.0.0
+    AllowedPattern: "^aws-v\\d+\\.\\d+\\.\\d+$"
+    ConstraintDescription: "aws-vX.Y.Z"
+    Description: "Version of this template. Must match the file you launched - do not change."
+  SymbolPrincipalArn:
+    Type: String
+    AllowedPattern: "^arn:aws(-[a-z]+)*:iam::\\d{12}:(role|user)/[\\w+=,.@/-]{1,512}$"
+    ConstraintDescription: "An IAM role or user ARN. Filled in by Symbol."
+    Description: "The only principal allowed to assume the Symbol roles (Symbol's AWS identity)."
+  ExternalId:
+    Type: String
+    AllowedPattern: "^[\\w+=,.@:/-]{2,1224}$"
+    ConstraintDescription: "2-1224 characters of [A-Za-z0-9_+=,.@:/-]. Filled in by Symbol."
+    Description: >-
+      Required by the roles' trust policy (sts:ExternalId). Not a secret: it stops another
+      Symbol customer from making Symbol use your roles. Filled in by Symbol - do not change.
+  SymbolEgressCidrs:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^((\\d{1,3}\\.){3}\\d{1,3}/\\d{1,2}|[0-9A-Fa-f]{0,4}(:[0-9A-Fa-f]{0,4}){2,7}/\\d{1,3})(,((\\d{1,3}\\.){3}\\d{1,3}/\\d{1,2}|[0-9A-Fa-f]{0,4}(:[0-9A-Fa-f]{0,4}){2,7}/\\d{1,3}))*$"
+    ConstraintDescription: "Comma-separated IPv4/IPv6 CIDRs without spaces, or empty."
+    Description: >-
+      Symbol's published egress IPs. When set, every permission of the Symbol roles applies
+      only to calls coming from these ranges (aws:SourceIp). Filled in by Symbol.
+
+  # ---------------------------------------------------------------- Modules
+  EnableSignin:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: "Users sign in to Symbol with IAM Identity Center. Creates only a read-only discovery function."
+  EnableFinops:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: "Cost and usage (FOCUS export), inventory tags, Cost Optimization Hub recommendations."
+  EnableMonitoring:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: "CloudTrail, GuardDuty, Security Hub and Config events through EventBridge and SQS."
+  EnableSecurity:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: "Security posture scan with the AWS managed policies SecurityAudit and ViewOnlyAccess."
+
+  # ---------------------------------------------------------------- Sign-in
+  IdentityCenterRegion:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[a-z]{2}(-[a-z]+)+-\\d$"
+    ConstraintDescription: "Empty, or an AWS Region such as eu-west-1."
+    Description: "Leave empty to detect it. Required when you enter the access portal URL yourself."
+  IdentityCenterStartUrl:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^https://[A-Za-z0-9-]+\\.awsapps\\.com/start/?$"
+    ConstraintDescription: "Empty, or https://<id-or-alias>.awsapps.com/start"
+    Description: "Leave empty to detect it (a read-only function lists your Identity Center instance)."
+
+  # ---------------------------------------------------------------- FinOps
+  CreateFocusExport:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: >-
+      true: create a bucket and a FOCUS 1.0 (CSV, gzip) Data Export for Symbol.
+      false: use an existing FOCUS 1.0 CSV/gzip export (fill in the three fields below).
+  ExistingExportBucket:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+    ConstraintDescription: "Empty, or an S3 bucket name."
+    Description: "Only when CreateFocusExport is false: the bucket the existing export writes to."
+  ExistingExportPrefix:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[A-Za-z0-9!_.*'()-]([A-Za-z0-9!_.*'()/-]{0,1021}[A-Za-z0-9!_.*'()-])?$"
+    ConstraintDescription: "Empty, or an S3 prefix that neither starts nor ends with '/'."
+    Description: "Only when CreateFocusExport is false: the export's S3 path prefix, as entered in Data Exports."
+  ExistingExportName:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[0-9A-Za-z_-]{1,128}$"
+    ConstraintDescription: "Empty, or a Data Exports export name."
+    Description: "Only when CreateFocusExport is false: the export's name (it is a folder under the prefix)."
+  ExportBucketKmsKeyArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^arn:aws(-[a-z]+)*:kms:[a-z0-9-]+:\\d{12}:key/[A-Za-z0-9-]{1,128}$"
+    ConstraintDescription: "Empty, or a KMS key ARN."
+    Description: "Only if the export bucket uses SSE-KMS: Symbol's FinOps role then gets kms:Decrypt on this key, through S3 only."
+
+  # ---------------------------------------------------------------- Monitoring
+  MonitoringQueueRetentionSeconds:
+    Type: Number
+    Default: 345600
+    MinValue: 60
+    MaxValue: 1209600
+    Description: "How long events wait in the queue if Symbol cannot read them (default 4 days)."
+
+Mappings:
+  Symbol:
+    Release:
+      # Where Symbol publishes this template. The release workflow refuses to publish when
+      # this does not match its S3 bucket, so the forwarder link below is always right.
+      TemplatesBaseUrl: "https://symbol-cloud-connect.s3.us-east-1.amazonaws.com/aws"
+      TemplatesBaseUrlEncoded: "https%3A%2F%2Fsymbol-cloud-connect.s3.us-east-1.amazonaws.com%2Faws"
+    FinOps:
+      ExportPrefix: "symbol-focus"
+
+Rules:
+  StackRegionIsUsEast1:
+    Assertions:
+      - Assert: !Equals [!Ref "AWS::Region", us-east-1]
+        AssertDescription: >-
+          Launch this stack in US East (N. Virginia) us-east-1: Data Exports and global-service
+          events (IAM, STS, sign-in) exist only there. Switch the console Region and retry.
+  AtLeastOneModule:
+    Assertions:
+      - Assert: !Or
+          - !Equals [!Ref EnableSignin, "true"]
+          - !Equals [!Ref EnableFinops, "true"]
+          - !Equals [!Ref EnableMonitoring, "true"]
+          - !Equals [!Ref EnableSecurity, "true"]
+        AssertDescription: "Enable at least one module."
+  ExistingExportIsComplete:
+    RuleCondition: !And
+      - !Equals [!Ref EnableFinops, "true"]
+      - !Equals [!Ref CreateFocusExport, "false"]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref ExistingExportBucket, ""]]
+        AssertDescription: "CreateFocusExport is false: enter ExistingExportBucket."
+      - Assert: !Not [!Equals [!Ref ExistingExportName, ""]]
+        AssertDescription: "CreateFocusExport is false: enter ExistingExportName."
+  StartUrlNeedsRegion:
+    RuleCondition: !And
+      - !Equals [!Ref EnableSignin, "true"]
+      - !Not [!Equals [!Ref IdentityCenterStartUrl, ""]]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref IdentityCenterRegion, ""]]
+        AssertDescription: "You entered the access portal URL: also enter IdentityCenterRegion (or leave both empty to detect them)."
+
+Conditions:
+  SigninEnabled: !Equals [!Ref EnableSignin, "true"]
+  FinopsEnabled: !Equals [!Ref EnableFinops, "true"]
+  MonitoringEnabled: !Equals [!Ref EnableMonitoring, "true"]
+  SecurityEnabled: !Equals [!Ref EnableSecurity, "true"]
+  ObservabilityEnabled: !Or [!Condition MonitoringEnabled, !Condition SecurityEnabled]
+  ObservabilityWithCidrs: !And [!Condition ObservabilityEnabled, !Condition HasCidrs]
+  FinopsWithCidrs: !And [!Condition FinopsEnabled, !Condition HasCidrs]
+  HasCidrs: !Not [!Equals [!Ref SymbolEgressCidrs, ""]]
+  DiscoverIdentityCenter: !And
+    - !Condition SigninEnabled
+    - !Equals [!Ref IdentityCenterStartUrl, ""]
+  CreateExport: !And
+    - !Condition FinopsEnabled
+    - !Equals [!Ref CreateFocusExport, "true"]
+  ExportCreatedHere: !Equals [!Ref CreateFocusExport, "true"]
+  HasExportPrefix: !Or
+    - !Condition ExportCreatedHere
+    - !Not [!Equals [!Ref ExistingExportPrefix, ""]]
+  HasKmsKey: !And
+    - !Condition FinopsEnabled
+    - !Not [!Equals [!Ref ExportBucketKmsKeyArn, ""]]
+  # Separators of the "modules" JSON array (a comma is needed before a module only when
+  # an earlier module is enabled).
+  CommaBeforeMonitoring: !Or [!Condition SigninEnabled, !Condition FinopsEnabled]
+  CommaBeforeSecurity: !Or [!Condition SigninEnabled, !Condition FinopsEnabled, !Condition MonitoringEnabled]
+
+Resources:
+  # =====================================================================================
+  # signin: read-only discovery of the IAM Identity Center instance (region + start URL)
+  # =====================================================================================
+  IdentityCenterDiscoveryLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: DiscoverIdentityCenter
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/SymbolIdcDiscovery-${SymbolOrgId}"
+      RetentionInDays: 14
+
+  IdentityCenterDiscoveryRole:
+    Type: AWS::IAM::Role
+    Condition: DiscoverIdentityCenter
+    Properties:
+      Description: "Symbol: lets the Identity Center discovery function list the instance and write its own logs."
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref "AWS::AccountId"
+      Policies:
+        - PolicyName: symbol-identity-center-discovery
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ListIdentityCenterInstances
+                Effect: Allow
+                Action: sso:ListInstances
+                # sso:ListInstances supports no resource-level permission.
+                Resource: "*"
+              - Sid: WriteOwnLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt IdentityCenterDiscoveryLogGroup.Arn
+      Tags:
+        - Key: symbol-managed
+          Value: "true"
+        - Key: symbol-org
+          Value: !Ref SymbolOrgId
+        - Key: symbol-template
+          Value: !Ref TemplateVersion
+
+  IdentityCenterDiscoveryFunction:
+    Type: AWS::Lambda::Function
+    Condition: DiscoverIdentityCenter
+    DependsOn: IdentityCenterDiscoveryLogGroup
+    Properties:
+      FunctionName: !Sub "SymbolIdcDiscovery-${SymbolOrgId}"
+      Description: "Symbol: finds the IAM Identity Center instance (read-only, runs at stack create/update)."
+      Runtime: python3.13
+      Architectures: [arm64]
+      Handler: index.handler
+      MemorySize: 256
+      Timeout: 120
+      Role: !GetAtt IdentityCenterDiscoveryRole.Arn
+      Tags:
+        - Key: symbol-managed
+          Value: "true"
+        - Key: symbol-org
+          Value: !Ref SymbolOrgId
+        - Key: symbol-template
+          Value: !Ref TemplateVersion
+      Code:
+        ZipFile: |
+          """Symbol Cloud Connect - IAM Identity Center discovery (CloudFormation custom resource).
+
+          Read-only. Calls sso-admin:ListInstances in the Regions where IAM Identity Center is
+          offered and returns Region, StartUrl, InstanceArn and Problem. It never fails the
+          stack: when nothing is found it answers SUCCESS with empty values and a Problem text.
+          Every returned value is validated or sanitised, because the stack embeds it in JSON.
+          """
+          import json
+          import logging
+          import re
+          import time
+          import urllib.request
+          from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+
+          import boto3
+          from botocore.config import Config
+
+          LOG = logging.getLogger()
+          LOG.setLevel(logging.INFO)
+
+          PHYSICAL_ID = "symbol-identity-center-discovery"
+          STORE_ID = re.compile(r"^d-[0-9a-f]{10}$")
+          REGION = re.compile(r"^[a-z]{2}(-[a-z]+)+-\d$")
+          INSTANCE_ARN = re.compile(r"^arn:aws[a-z-]*:sso:::instance/[A-Za-z0-9._/-]{1,200}$")
+          UNSAFE = re.compile(r"[^A-Za-z0-9 .,:;()_/+=@-]")
+          # A Region that is not enabled (opt-in) rejects the credentials: not a problem.
+          NOT_ENABLED = {"UnrecognizedClientException", "InvalidClientTokenId",
+                         "AuthFailure", "InvalidSignatureException", "OptInRequired"}
+          CLIENT_CONFIG = Config(connect_timeout=3, read_timeout=5,
+                                 retries={"max_attempts": 2, "mode": "standard"})
+
+
+          def clean(text, limit=300):
+              """Text safe to embed in a JSON string: no quote, backslash or control char."""
+              return UNSAFE.sub("", str(text or ""))[:limit].strip()
+
+
+          def send(event, status, data, reason=""):
+              """PUT the custom-resource response to the pre-signed URL (cfn-response format)."""
+              body = json.dumps({
+                  "Status": status,
+                  "Reason": clean(reason or "See the function's CloudWatch Logs", 250),
+                  "PhysicalResourceId": event.get("PhysicalResourceId") or PHYSICAL_ID,
+                  "StackId": event.get("StackId"),
+                  "RequestId": event.get("RequestId"),
+                  "LogicalResourceId": event.get("LogicalResourceId"),
+                  "NoEcho": False,
+                  "Data": data,
+              }).encode("utf-8")
+              request = urllib.request.Request(
+                  event["ResponseURL"], data=body, method="PUT",
+                  headers={"Content-Type": "", "Content-Length": str(len(body))})
+              for attempt in range(1, 4):
+                  try:
+                      with urllib.request.urlopen(request, timeout=15) as response:
+                          LOG.info("response sent: HTTP %s", response.status)
+                          return True
+                  except Exception as exc:  # noqa: BLE001
+                      LOG.warning("response attempt %d failed: %s", attempt, exc)
+                      time.sleep(attempt)
+              return False
+
+
+          def error_code(exc):
+              response = getattr(exc, "response", None) or {}
+              return str((response.get("Error") or {}).get("Code") or type(exc).__name__)
+
+
+          def list_instances(region):
+              client = boto3.client("sso-admin", region_name=region, config=CLIENT_CONFIG)
+              instances = []
+              token = None
+              while True:
+                  kwargs = {"MaxResults": 100}
+                  if token:
+                      kwargs["NextToken"] = token
+                  page = client.list_instances(**kwargs)
+                  instances.extend(page.get("Instances") or [])
+                  token = page.get("NextToken")
+                  if not token:
+                      return instances
+
+
+          def pick(region, instances):
+              """The first usable instance of a Region, as output values, or None."""
+              for instance in instances:
+                  status = instance.get("Status") or "ACTIVE"
+                  store_id = str(instance.get("IdentityStoreId") or "")
+                  arn = str(instance.get("InstanceArn") or "")
+                  if status != "ACTIVE" or not STORE_ID.match(store_id):
+                      continue
+                  return {
+                      "Region": region,
+                      "StartUrl": "https://%s.awsapps.com/start" % store_id,
+                      "InstanceArn": arn if INSTANCE_ARN.match(arn) else "",
+                      "Problem": "",
+                  }
+              return None
+
+
+          def discover(preferred, partition, deadline):
+              regions = boto3.session.Session().get_available_regions(
+                  "sso-admin", partition_name=partition or "aws")
+              if preferred and REGION.match(preferred):
+                  regions = [preferred] + [r for r in regions if r != preferred]
+              denied, failed, not_enabled = [], [], 0
+
+              def probe(region):
+                  return region, list_instances(region)
+
+              def account(future, region):
+                  nonlocal not_enabled
+                  try:
+                      return pick(*future.result())
+                  except Exception as exc:  # noqa: BLE001 - per-Region isolation
+                      code = error_code(exc)
+                      if code in NOT_ENABLED:
+                          not_enabled += 1
+                      elif "AccessDenied" in code:
+                          denied.append(region)
+                      else:
+                          failed.append(region)
+                      LOG.info("%s: %s", region, code)
+                      return None
+
+              pool = ThreadPoolExecutor(max_workers=12)
+              try:
+                  # The Region the admin named is tried alone first: one call when it is right.
+                  if preferred and regions and regions[0] == preferred:
+                      found = account(pool.submit(probe, preferred), preferred)
+                      if found:
+                          return found
+                      regions = regions[1:]
+                  pending = {pool.submit(probe, r): r for r in regions}
+                  while pending:
+                      remaining = deadline - time.monotonic()
+                      if remaining <= 0:
+                          failed.extend(pending.values())
+                          break
+                      done, _ = wait(list(pending), timeout=remaining, return_when=FIRST_COMPLETED)
+                      for future in done:
+                          found = account(future, pending.pop(future))
+                          if found:
+                              return found
+              finally:
+                  pool.shutdown(wait=False, cancel_futures=True)
+
+              scanned = len(regions) + (1 if preferred else 0)
+              parts = ["No IAM Identity Center instance found in this account "
+                       "(%d Regions checked, %d not enabled)." % (scanned, not_enabled)]
+              if denied:
+                  parts.append("sso:ListInstances denied in %s (check SCPs)." % ", ".join(sorted(denied)[:5]))
+              if failed:
+                  parts.append("No answer from %s." % ", ".join(sorted(failed)[:5]))
+              parts.append("Enter IdentityCenterRegion and IdentityCenterStartUrl, then update the stack.")
+              return {"Region": "", "StartUrl": "", "InstanceArn": "", "Problem": clean(" ".join(parts))}
+
+
+          def handler(event, context):
+              LOG.info("request %s %s", event.get("RequestType"), event.get("LogicalResourceId"))
+              if event.get("RequestType") == "Delete":
+                  # Nothing was created: deletion is immediate and never fails.
+                  send(event, "SUCCESS", {})
+                  return
+              data = {"Region": "", "StartUrl": "", "InstanceArn": "", "Problem": ""}
+              try:
+                  props = event.get("ResourceProperties") or {}
+                  budget = context.get_remaining_time_in_millis() / 1000.0 - 20
+                  deadline = time.monotonic() + max(5.0, budget)
+                  data.update(discover(str(props.get("PreferredRegion") or ""),
+                                       str(props.get("Partition") or "aws"), deadline))
+              except Exception as exc:  # noqa: BLE001 - the stack must never fail here
+                  LOG.exception("discovery failed")
+                  data["Problem"] = clean("Identity Center discovery failed (%s). Enter "
+                                          "IdentityCenterRegion and IdentityCenterStartUrl, then "
+                                          "update the stack." % type(exc).__name__)
+              LOG.info("result region=%s found=%s", data["Region"], bool(data["StartUrl"]))
+              send(event, "SUCCESS", data)
+
+  IdentityCenterDiscovery:
+    Type: Custom::SymbolIdentityCenterDiscovery
+    Condition: DiscoverIdentityCenter
+    DependsOn: IdentityCenterDiscoveryLogGroup
+    Properties:
+      ServiceToken: !GetAtt IdentityCenterDiscoveryFunction.Arn
+      ServiceTimeout: 300
+      PreferredRegion: !Ref IdentityCenterRegion
+      Partition: !Ref "AWS::Partition"
+      # A new session (upgrade, rotation) runs the discovery again.
+      SetupSessionId: !Ref SetupSessionId
+
+  # =====================================================================================
+  # finops
+  # =====================================================================================
+  FocusExportBucket:
+    Type: AWS::S3::Bucket
+    Condition: CreateExport
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub
+        - "symbol-focus-${AWS::AccountId}-${Suffix}"
+        - Suffix: !Select [0, !Split ["-", !Select [2, !Split ["/", !Ref "AWS::StackId"]]]]
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      LifecycleConfiguration:
+        Rules:
+          - Id: abort-incomplete-uploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+      Tags:
+        - Key: symbol-managed
+          Value: "true"
+        - Key: symbol-org
+          Value: !Ref SymbolOrgId
+        - Key: symbol-template
+          Value: !Ref TemplateVersion
+
+  FocusExportBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: CreateExport
+    Properties:
+      Bucket: !Ref FocusExportBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt FocusExportBucket.Arn
+              - !Sub "${FocusExportBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+          - Sid: EnableAWSDataExportsToWriteToS3
+            Effect: Allow
+            Principal:
+              Service:
+                - bcm-data-exports.amazonaws.com
+                - billingreports.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub "${FocusExportBucket.Arn}/*"
+            Condition:
+              StringLike:
+                aws:SourceArn:
+                  - !Sub "arn:${AWS::Partition}:cur:us-east-1:${AWS::AccountId}:definition/*"
+                  - !Sub "arn:${AWS::Partition}:bcm-data-exports:us-east-1:${AWS::AccountId}:export/*"
+              StringEquals:
+                aws:SourceAccount: !Ref "AWS::AccountId"
+          - Sid: EnableAWSDataExportsToCheckBucketPolicy
+            Effect: Allow
+            Principal:
+              Service:
+                - bcm-data-exports.amazonaws.com
+                - billingreports.amazonaws.com
+            Action: s3:GetBucketPolicy
+            Resource: !GetAtt FocusExportBucket.Arn
+            Condition:
+              StringLike:
+                aws:SourceArn:
+                  - !Sub "arn:${AWS::Partition}:cur:us-east-1:${AWS::AccountId}:definition/*"
+                  - !Sub "arn:${AWS::Partition}:bcm-data-exports:us-east-1:${AWS::AccountId}:export/*"
+              StringEquals:
+                aws:SourceAccount: !Ref "AWS::AccountId"
+
+  FocusExport:
+    Type: AWS::BCMDataExports::Export
+    Condition: CreateExport
+    # Data Exports checks the bucket policy when the export is created.
+    DependsOn: FocusExportBucketPolicy
+    Properties:
+      Export:
+        Name: !Sub "symbol-focus-${SymbolOrgId}"
+        Description: "Symbol FinOps: FOCUS 1.0 with AWS columns, CSV gzip. Read by Symbol's FinOps role."
+        DataQuery:
+          # Every column of the FOCUS 1.0 with AWS columns table (no table configuration exists).
+          QueryStatement: >-
+            SELECT AvailabilityZone, BilledCost, BillingAccountId, BillingAccountName,
+            BillingCurrency, BillingPeriodEnd, BillingPeriodStart, ChargeCategory, ChargeClass,
+            ChargeDescription, ChargeFrequency, ChargePeriodEnd, ChargePeriodStart,
+            CommitmentDiscountCategory, CommitmentDiscountId, CommitmentDiscountName,
+            CommitmentDiscountStatus, CommitmentDiscountType, ConsumedQuantity, ConsumedUnit,
+            ContractedCost, ContractedUnitPrice, EffectiveCost, InvoiceIssuerName, ListCost,
+            ListUnitPrice, PricingCategory, PricingQuantity, PricingUnit, ProviderName,
+            PublisherName, RegionId, RegionName, ResourceId, ResourceName, ResourceType,
+            ServiceCategory, ServiceName, SkuId, SkuPriceId, SubAccountId, SubAccountName, Tags,
+            x_CostCategories, x_Discounts, x_Operation, x_ServiceCode, x_UsageType
+            FROM FOCUS_1_0_AWS
+        DestinationConfigurations:
+          S3Destination:
+            S3Bucket: !Ref FocusExportBucket
+            S3BucketOwner: !Ref "AWS::AccountId"
+            S3Prefix: !FindInMap [Symbol, FinOps, ExportPrefix]
+            S3Region: !Ref "AWS::Region"
+            S3OutputConfigurations:
+              Format: TEXT_OR_CSV
+              Compression: GZIP
+              OutputType: CUSTOM
+              Overwrite: OVERWRITE_REPORT
+        RefreshCadence:
+          Frequency: SYNCHRONOUS
+      Tags:
+        - Key: symbol-managed
+          Value: "true"
+        - Key: symbol-org
+          Value: !Ref SymbolOrgId
+        - Key: symbol-template
+          Value: !Ref TemplateVersion
+
+  FinOpsRole:
+    Type: AWS::IAM::Role
+    Condition: FinopsEnabled
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            # W1031 resolves ExistingExportBucket with its empty default; the rule
+            # ExistingExportIsComplete makes it non-empty whenever that branch is used.
+            - W1031
+    Properties:
+      RoleName: !Sub "SymbolFinOps-${SymbolOrgId}"
+      Description: "Symbol FinOps (read-only): cost export, tags, Cost Optimization Hub, Organizations accounts."
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: SymbolAssumesWithExternalId
+            Effect: Allow
+            Principal:
+              AWS: !Ref SymbolPrincipalArn
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      Policies:
+        - PolicyName: symbol-finops
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ListExportPath
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:s3:::${Bucket}"
+                  - Bucket: !If [ExportCreatedHere, !Ref FocusExportBucket, !Ref ExistingExportBucket]
+                Condition: !If
+                  - HasCidrs
+                  - StringLike:
+                      s3:prefix:
+                        - !If [HasExportPrefix, !Sub ["${Prefix}/${Name}/*", {Prefix: !If [ExportCreatedHere, !FindInMap [Symbol, FinOps, ExportPrefix], !Ref ExistingExportPrefix], Name: !If [ExportCreatedHere, !Sub "symbol-focus-${SymbolOrgId}", !Ref ExistingExportName]}], !Sub ["${Name}/*", {Name: !Ref ExistingExportName}]]
+                    IpAddress:
+                      aws:SourceIp: !Split [",", !Ref SymbolEgressCidrs]
+                  - StringLike:
+                      s3:prefix:
+                        - !If [HasExportPrefix, !Sub ["${Prefix}/${Name}/*", {Prefix: !If [ExportCreatedHere, !FindInMap [Symbol, FinOps, ExportPrefix], !Ref ExistingExportPrefix], Name: !If [ExportCreatedHere, !Sub "symbol-focus-${SymbolOrgId}", !Ref ExistingExportName]}], !Sub ["${Name}/*", {Name: !Ref ExistingExportName}]]
+              - Sid: LocateExportBucket
+                Effect: Allow
+                Action: s3:GetBucketLocation
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:s3:::${Bucket}"
+                  - Bucket: !If [ExportCreatedHere, !Ref FocusExportBucket, !Ref ExistingExportBucket]
+                Condition: !If
+                  - HasCidrs
+                  - IpAddress:
+                      aws:SourceIp: !Split [",", !Ref SymbolEgressCidrs]
+                  - !Ref "AWS::NoValue"
+              - Sid: ReadExportFiles
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !If
+                  - HasExportPrefix
+                  - !Sub
+                    - "arn:${AWS::Partition}:s3:::${Bucket}/${Prefix}/${Name}/*"
+                    - Bucket: !If [ExportCreatedHere, !Ref FocusExportBucket, !Ref ExistingExportBucket]
+                      Prefix: !If [ExportCreatedHere, !FindInMap [Symbol, FinOps, ExportPrefix], !Ref ExistingExportPrefix]
+                      Name: !If [ExportCreatedHere, !Sub "symbol-focus-${SymbolOrgId}", !Ref ExistingExportName]
+                  - !Sub "arn:${AWS::Partition}:s3:::${ExistingExportBucket}/${ExistingExportName}/*"
+                Condition: !If
+                  - HasCidrs
+                  - IpAddress:
+                      aws:SourceIp: !Split [",", !Ref SymbolEgressCidrs]
+                  - !Ref "AWS::NoValue"
+              - Sid: ReadOnlyBillingAndInventory
+                Effect: Allow
+                Action:
+                  - tag:GetResources
+                  - cost-optimization-hub:ListEnrollmentStatuses
+                  - cost-optimization-hub:ListRecommendations
+                  - cost-optimization-hub:GetRecommendation
+                  - organizations:ListAccounts
+                  - organizations:DescribeOrganization
+                  - ec2:DescribeRegions
+                # None of these actions supports resource-level permissions (see PERMISSIONS.md).
+                Resource: "*"
+                Condition: !If
+                  - HasCidrs
+                  - IpAddress:
+                      aws:SourceIp: !Split [",", !Ref SymbolEgressCidrs]
+                  - !Ref "AWS::NoValue"
+              - !If
+                - HasKmsKey
+                - Sid: DecryptExportThroughS3
+                  Effect: Allow
+                  Action: kms:Decrypt
+                  Resource: !Ref ExportBucketKmsKeyArn
+                  Condition: !If
+                    - HasCidrs
+                    - StringLike:
+                        kms:ViaService: "s3.*.amazonaws.com"
+                      IpAddress:
+                        aws:SourceIp: !Split [",", !Ref SymbolEgressCidrs]
+                    - StringLike:
+                        kms:ViaService: "s3.*.amazonaws.com"
+                - !Ref "AWS::NoValue"
+              - !If
+                - FinopsWithCidrs
+                - Sid: DenyOutsideSymbolEgress
+                  Effect: Deny
+                  Action: "*"
+                  Resource: "*"
+                  Condition:
+                    NotIpAddress:
+                      aws:SourceIp: !Split [",", !Ref SymbolEgressCidrs]
+                    Bool:
+                      aws:ViaAWSService: "false"
+                - !Ref "AWS::NoValue"
+      Tags:
+        - Key: symbol-managed
+          Value: "true"
+        - Key: symbol-org
+          Value: !Ref SymbolOrgId
+        - Key: symbol-template
+          Value: !Ref TemplateVersion
+
+  # =====================================================================================
+  # monitoring + security: observability role
+  # =====================================================================================
+  ObservabilityRole:
+    Type: AWS::IAM::Role
+    Condition: ObservabilityEnabled
+    Properties:
+      RoleName: !Sub "SymbolObservability-${SymbolOrgId}"
+      Description: "Symbol Observability (read-only): monitoring event queue and/or security posture scan."
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: SymbolAssumesWithExternalId
+            Effect: Allow
+            Principal:
+              AWS: !Ref SymbolPrincipalArn
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      ManagedPolicyArns: !If
+        - SecurityEnabled
+        - - !Sub "arn:${AWS::Partition}:iam::aws:policy/SecurityAudit"
+          - !Sub "arn:${AWS::Partition}:iam::aws:policy/job-function/ViewOnlyAccess"
+        - !Ref "AWS::NoValue"
+      Policies:
+        - !If
+          - MonitoringEnabled
+          - PolicyName: symbol-monitoring
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Sid: ConsumeSymbolEventQueue
+                  Effect: Allow
+                  Action:
+                    - sqs:ReceiveMessage
+                    - sqs:DeleteMessage
+                    - sqs:GetQueueAttributes
+                    - sqs:ChangeMessageVisibility
+                  Resource: !GetAtt MonitoringQueue.Arn
+                  Condition: !If
+                    - HasCidrs
+                    - IpAddress:
+                        aws:SourceIp: !Split [",", !Ref SymbolEgressCidrs]
+                    - !Ref "AWS::NoValue"
+          - !Ref "AWS::NoValue"
+        - !If
+          - ObservabilityWithCidrs
+          # The managed policies (SecurityAudit, ViewOnlyAccess) cannot carry a condition:
+          # this deny restricts them, like every other permission, to Symbol's egress IPs.
+          - PolicyName: symbol-source-ip
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Sid: DenyOutsideSymbolEgress
+                  Effect: Deny
+                  Action: "*"
+                  Resource: "*"
+                  Condition:
+                    NotIpAddress:
+                      aws:SourceIp: !Split [",", !Ref SymbolEgressCidrs]
+                    Bool:
+                      aws:ViaAWSService: "false"
+          - !Ref "AWS::NoValue"
+      Tags:
+        - Key: symbol-managed
+          Value: "true"
+        - Key: symbol-org
+          Value: !Ref SymbolOrgId
+        - Key: symbol-template
+          Value: !Ref TemplateVersion
+
+  # =====================================================================================
+  # monitoring: EventBridge (default bus, us-east-1) -> SQS
+  # =====================================================================================
+  MonitoringDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Condition: MonitoringEnabled
+    # Delete stack = revoke: the queue holds only transient events.
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      QueueName: !Sub "symbol-monitoring-${SymbolOrgId}-dlq"
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 1209600
+      Tags:
+        - Key: symbol-managed
+          Value: "true"
+        - Key: symbol-org
+          Value: !Ref SymbolOrgId
+        - Key: symbol-template
+          Value: !Ref TemplateVersion
+
+  MonitoringQueue:
+    Type: AWS::SQS::Queue
+    Condition: MonitoringEnabled
+    # Delete stack = revoke: the queue holds only transient events.
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      QueueName: !Sub "symbol-monitoring-${SymbolOrgId}"
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: !Ref MonitoringQueueRetentionSeconds
+      # Symbol long-polls (20 s) and deletes a message only once it is stored.
+      ReceiveMessageWaitTimeSeconds: 20
+      VisibilityTimeout: 60
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt MonitoringDeadLetterQueue.Arn
+        maxReceiveCount: 5
+      Tags:
+        - Key: symbol-managed
+          Value: "true"
+        - Key: symbol-org
+          Value: !Ref SymbolOrgId
+        - Key: symbol-template
+          Value: !Ref TemplateVersion
+
+  MonitoringQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Condition: MonitoringEnabled
+    Properties:
+      Queues:
+        - !Ref MonitoringQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: EventBridgeRuleSendsEvents
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt MonitoringQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt MonitoringRule.Arn
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "sqs:*"
+            Resource: !GetAtt MonitoringQueue.Arn
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  MonitoringDeadLetterQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Condition: MonitoringEnabled
+    Properties:
+      Queues:
+        - !Ref MonitoringDeadLetterQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "sqs:*"
+            Resource: !GetAtt MonitoringDeadLetterQueue.Arn
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  MonitoringRule:
+    Type: AWS::Events::Rule
+    Condition: MonitoringEnabled
+    Properties:
+      Name: !Sub "symbol-monitoring-${SymbolOrgId}"
+      Description: "Symbol monitoring: CloudTrail API calls, GuardDuty, Security Hub and Config compliance to Symbol's queue."
+      EventBusName: default
+      State: ENABLED
+      # Exactly the families monitoring-service parses (app/pipeline/parse.py, parse_aws).
+      # Also matches the events the regional forwarders send to this bus (delivered unchanged).
+      EventPattern:
+        detail-type:
+          - "AWS API Call via CloudTrail"
+          - "GuardDuty Finding"
+          - "Security Hub Findings - Imported"
+          - "Config Rules Compliance Change"
+      Targets:
+        - Id: symbol-monitoring-queue
+          Arn: !GetAtt MonitoringQueue.Arn
+
+Outputs:
+  SymbolConnectionCode:
+    Description: "Copy this value and paste it into Symbol. It contains identifiers only, no secret."
+    Value: !Join
+      - ""
+      - - "SYMBOL-AWS-1."
+        - !Base64
+          Fn::Join:
+            - ""
+            - - !Sub '{"v":1,"org":"${SymbolOrgId}","session":"${SetupSessionId}","template":"${TemplateVersion}","account":"${AWS::AccountId}","partition":"${AWS::Partition}","region":"${AWS::Region}","modules":['
+              - !If [SigninEnabled, '"signin"', ""]
+              - !If [FinopsEnabled, !If [SigninEnabled, ',"finops"', '"finops"'], ""]
+              - !If [MonitoringEnabled, !If [CommaBeforeMonitoring, ',"monitoring"', '"monitoring"'], ""]
+              - !If [SecurityEnabled, !If [CommaBeforeSecurity, ',"security"', '"security"'], ""]
+              - '],"signin":'
+              - !If
+                - SigninEnabled
+                - !If
+                  - DiscoverIdentityCenter
+                  - !Sub '{"identity_center_region":"${IdentityCenterDiscovery.Region}","start_url":"${IdentityCenterDiscovery.StartUrl}","discovered":true,"problem":"${IdentityCenterDiscovery.Problem}"}'
+                  - !Sub '{"identity_center_region":"${IdentityCenterRegion}","start_url":"${IdentityCenterStartUrl}","discovered":false,"problem":""}'
+                - "null"
+              - ',"finops":'
+              - !If
+                - FinopsEnabled
+                - !Sub
+                  - '{"role_arn":"${FinOpsRole.Arn}","payer_account_id":"${AWS::AccountId}","bucket":"${Bucket}","bucket_region":"${AWS::Region}","prefix":"${Prefix}","export_name":"${Name}","export_created":${Created}}'
+                  - Bucket: !If [ExportCreatedHere, !Ref FocusExportBucket, !Ref ExistingExportBucket]
+                    Prefix: !If [ExportCreatedHere, !FindInMap [Symbol, FinOps, ExportPrefix], !Ref ExistingExportPrefix]
+                    Name: !If [ExportCreatedHere, !Sub "symbol-focus-${SymbolOrgId}", !Ref ExistingExportName]
+                    Created: !If [ExportCreatedHere, "true", "false"]
+                - "null"
+              - ',"observability":'
+              - !If
+                - ObservabilityEnabled
+                - !Sub '{"role_arn":"${ObservabilityRole.Arn}","account_id":"${AWS::AccountId}","region":"${AWS::Region}"}'
+                - "null"
+              - ',"monitoring":'
+              - !If
+                - MonitoringEnabled
+                - !Sub '{"queue_url":"${MonitoringQueue}","rule_name":"${MonitoringRule}"}'
+                - "null"
+              - ',"security":'
+              - !If
+                - SecurityEnabled
+                - '{"managed_policies":["SecurityAudit","ViewOnlyAccess"]}'
+                - "null"
+              - "}"
+
+  SymbolConnectionSummary:
+    Description: "What this stack connected, in plain words."
+    Value: !Join
+      - " "
+      - - !Sub "Symbol org ${SymbolOrgId}, account ${AWS::AccountId} (${AWS::Region}), ${TemplateVersion}."
+        - !If
+          - SigninEnabled
+          - !If
+            - DiscoverIdentityCenter
+            - !Sub "Sign-in: detected [${IdentityCenterDiscovery.Region}] ${IdentityCenterDiscovery.StartUrl} ${IdentityCenterDiscovery.Problem}."
+            - !Sub "Sign-in: ${IdentityCenterRegion} ${IdentityCenterStartUrl}."
+          - "Sign-in: off."
+        - !If
+          - FinopsEnabled
+          - !Sub
+            - "FinOps: role ${FinOpsRole}, export s3://${Bucket}/${Path} (${Origin}; first delivery within 24 h)."
+            - Bucket: !If [ExportCreatedHere, !Ref FocusExportBucket, !Ref ExistingExportBucket]
+              Path: !If
+                - HasExportPrefix
+                - !Sub
+                  - "${Prefix}/${Name}/"
+                  - Prefix: !If [ExportCreatedHere, !FindInMap [Symbol, FinOps, ExportPrefix], !Ref ExistingExportPrefix]
+                    Name: !If [ExportCreatedHere, !Sub "symbol-focus-${SymbolOrgId}", !Ref ExistingExportName]
+                - !Sub "${ExistingExportName}/"
+              Origin: !If [ExportCreatedHere, "created by this stack, bucket retained on delete", "existing export"]
+          - "FinOps: off."
+        - !If
+          - MonitoringEnabled
+          - !Sub "Monitoring: rule ${MonitoringRule} -> queue ${MonitoringQueue.QueueName}; add a regional forwarder for each other Region you use."
+          - "Monitoring: off."
+        - !If
+          - SecurityEnabled
+          - "Security: SecurityAudit + ViewOnlyAccess on the observability role."
+          - "Security: off."
+
+  RegionalForwarderTemplateUrl:
+    Condition: MonitoringEnabled
+    Description: "Template that forwards another Region's events to this stack's us-east-1 rule (one stack per Region)."
+    Value: !Sub
+      - "${Base}/${TemplateVersion}/symbol-aws-regional-forwarder.yaml"
+      - Base: !FindInMap [Symbol, Release, TemplatesBaseUrl]
+
+  RegionalForwarderQuickCreateUrl:
+    Condition: MonitoringEnabled
+    Description: "Open this link, pick the Region in the console, and create the forwarder stack there."
+    Value: !Sub
+      - "https://console.aws.amazon.com/cloudformation/home#/stacks/quickcreate?templateURL=${Base}%2F${TemplateVersion}%2Fsymbol-aws-regional-forwarder.yaml&stackName=Symbol-Event-Forwarder-${SymbolOrgId}&param_SymbolOrgId=${SymbolOrgId}&param_TargetEventBusArn=arn%3A${AWS::Partition}%3Aevents%3Aus-east-1%3A${AWS::AccountId}%3Aevent-bus%2Fdefault"
+      - Base: !FindInMap [Symbol, Release, TemplatesBaseUrlEncoded]
+
+  MonitoringEventBusArn:
+    Condition: MonitoringEnabled
+    Description: "Target event bus for the regional forwarders (TargetEventBusArn)."
+    Value: !Sub "arn:${AWS::Partition}:events:us-east-1:${AWS::AccountId}:event-bus/default"

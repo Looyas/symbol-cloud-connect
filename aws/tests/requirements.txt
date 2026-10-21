@@ -1,0 +1,5 @@
+# Test-only dependencies of aws/tests (never shipped with the templates).
+cfn-lint==1.57.2
+pytest==9.1.1
+PyYAML==6.0.3
+boto3==1.43.114

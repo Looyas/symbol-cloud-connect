@@ -1,0 +1,87 @@
+#
+# Symbol Cloud Connect for AWS - cfn-guard rules (cfn-guard 3.x).
+# Run: cfn-guard validate --rules aws/tests/guard/symbol.guard --data aws/symbol-aws-stack.yaml
+#
+
+let s3_buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]
+
+rule symbol_bucket_retained_private_encrypted when %s3_buckets !empty {
+    %s3_buckets {
+        DeletionPolicy == 'Retain'
+        UpdateReplacePolicy == 'Retain'
+        Properties.BucketEncryption.ServerSideEncryptionConfiguration[*] {
+            ServerSideEncryptionByDefault.SSEAlgorithm IN ['AES256', 'aws:kms']
+        }
+        Properties.PublicAccessBlockConfiguration {
+            BlockPublicAcls == true
+            BlockPublicPolicy == true
+            IgnorePublicAcls == true
+            RestrictPublicBuckets == true
+        }
+        Properties.OwnershipControls.Rules[*].ObjectOwnership == 'BucketOwnerEnforced'
+    }
+}
+
+let bucket_policies = Resources.*[ Type == 'AWS::S3::BucketPolicy' ]
+
+rule symbol_bucket_policy_denies_plain_http when %bucket_policies !empty {
+    %bucket_policies {
+        some Properties.PolicyDocument.Statement[*] {
+            Effect == 'Deny'
+            Condition.Bool.'aws:SecureTransport' == 'false'
+        }
+    }
+}
+
+let queues = Resources.*[ Type == 'AWS::SQS::Queue' ]
+
+rule symbol_queues_encrypted when %queues !empty {
+    %queues {
+        Properties.SqsManagedSseEnabled == true
+    }
+}
+
+let roles = Resources.*[ Type == 'AWS::IAM::Role' ]
+
+rule symbol_roles_short_sessions when %roles !empty {
+    %roles {
+        Properties.MaxSessionDuration == 3600
+    }
+}
+
+# Every trust statement that names an AWS principal requires the ExternalId.
+rule symbol_cross_account_trust_requires_external_id when %roles !empty {
+    %roles {
+        Properties.AssumeRolePolicyDocument.Statement[ Principal.AWS exists ] {
+            Effect == 'Allow'
+            Action == 'sts:AssumeRole'
+            Condition.StringEquals.'sts:ExternalId' exists
+        }
+    }
+}
+
+# Service trusts are scoped to this account (confused-deputy guard).
+rule symbol_service_trust_scoped_to_account when %roles !empty {
+    %roles {
+        Properties.AssumeRolePolicyDocument.Statement[ Principal.Service exists ] {
+            Condition.StringEquals.'aws:SourceAccount' exists
+        }
+    }
+}
+
+let functions = Resources.*[ Type == 'AWS::Lambda::Function' ]
+
+rule symbol_lambda_runtime when %functions !empty {
+    %functions {
+        Properties.Runtime == 'python3.13'
+        Properties.Timeout <= 300
+    }
+}
+
+let log_groups = Resources.*[ Type == 'AWS::Logs::LogGroup' ]
+
+rule symbol_log_retention when %log_groups !empty {
+    %log_groups {
+        Properties.RetentionInDays exists
+    }
+}

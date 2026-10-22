@@ -32,7 +32,7 @@ variable "setup_session_id" {
 
 variable "template_version" {
   type        = string
-  default     = "gcp-v2.0.1"
+  default     = "gcp-v2.0.2"
   description = "Version of this template. Must equal the git tag Symbol pinned in the launch command."
 
   validation {

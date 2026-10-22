@@ -88,7 +88,7 @@ output "symbol_connection_summary" {
     Monitoring: sink symbol-audit-sink (${var.scope_type}) -> topic symbol-monitoring -> ${module.monitoring[0].subscription_id}${var.enable_scc ? ", SCC findings -> ${module.monitoring[0].scc_subscription_id}" : ""}.
     %{~endif}
     %{~if var.enable_security}
-    Security: roles/viewer, roles/iam.securityReviewer, roles/cloudasset.viewer at ${var.scope_type} ${local.scope_id}.
+    Security: roles/viewer, roles/iam.securityReviewer, roles/cloudasset.viewer, roles/storage.bucketViewer at ${var.scope_type} ${local.scope_id}.
     %{~endif}
     To rotate a key: run the Symbol rotation command (symbol-setup.sh --rotate finops|observability).
     To revoke everything: symbol-setup.sh --destroy --org ${var.symbol_org_id} --project ${var.project_id}

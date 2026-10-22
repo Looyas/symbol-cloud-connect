@@ -44,6 +44,9 @@ locals {
     "roles/viewer",               # basic read-only role required by the contract; broad (see PERMISSIONS.md "Notes")
     "roles/iam.securityReviewer", # get/list every IAM policy (allow policies on all resource types)
     "roles/cloudasset.viewer",    # searchAllResources / searchAllIamPolicies
+    # storage.buckets.get (the scanner's get_bucket, CIS section 5): in none of the
+    # three roles above. Bucket metadata only: no object listing or reading.
+    "roles/storage.bucketViewer",
   ])
 }
 

@@ -4,6 +4,19 @@ Template versions follow `gcp-v<MAJOR>.<MINOR>.<PATCH>` (git tags; Symbol pins t
 commit). Releases are immutable. Any change to a granted role is listed under
 **Permissions**.
 
+## gcp-v2.0.2
+
+### Fixed
+- Security posture verification failed on `storage.buckets.get`: the scanner reads
+  each bucket's configuration (`get_bucket`, CIS section 5), and none of
+  `roles/viewer`, `roles/iam.securityReviewer`, `roles/cloudasset.viewer` grants it.
+
+### Permissions
+- **security**: `roles/storage.bucketViewer` at the scope for the observability
+  identity (`storage.buckets.get` / `storage.buckets.list`: bucket metadata only, no
+  object listing or reading). Re-running the setup adds this one grant and keeps the
+  keys; paste the new connection code (it names gcp-v2.0.2).
+
 ## gcp-v2.0.1
 
 ### Fixed

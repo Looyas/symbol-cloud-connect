@@ -1,4 +1,4 @@
-# Permissions (gcp-v2.0.1)
+# Permissions (gcp-v2.0.2)
 
 Two parts: what **you** (the administrator running `symbol-setup.sh`) need, and what
 **Symbol** receives. Every grant is a `google_*_iam_member` (additive): no existing
@@ -119,6 +119,7 @@ publish to the topics.
 | `roles/viewer` | Read the configuration of compute, storage, logging, BigQuery, networking, KMS, SQL, GKE resources |
 | `roles/iam.securityReviewer` | List and read every IAM allow policy (`getIamPolicy` on all resource types) |
 | `roles/cloudasset.viewer` | `searchAllResources`, `searchAllIamPolicies` across the scope |
+| `roles/storage.bucketViewer` | `storage.buckets.get`: each bucket's configuration (public access prevention, uniform access, versioning, logging, retention). None of the roles above grants it. No object listing or reading ([role reference](https://cloud.google.com/iam/docs/roles-permissions/storage)) |
 
 ### The identities themselves
 

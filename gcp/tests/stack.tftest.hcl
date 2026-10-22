@@ -127,7 +127,7 @@ run "all_modules_project_scope" {
       v               = 2
       org             = "2"
       session         = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
-      template        = "gcp-v2.0.1"
+      template        = "gcp-v2.0.2"
       project         = "acme-billing"
       project_number  = "123456789012"
       organization_id = "987654321"
@@ -244,6 +244,7 @@ run "all_modules_project_scope" {
       { target = "projects/acme-billing", role = "roles/viewer", member = "serviceAccount:symbol-observability@acme-billing.iam.gserviceaccount.com" },
       { target = "projects/acme-billing", role = "roles/iam.securityReviewer", member = "serviceAccount:symbol-observability@acme-billing.iam.gserviceaccount.com" },
       { target = "projects/acme-billing", role = "roles/cloudasset.viewer", member = "serviceAccount:symbol-observability@acme-billing.iam.gserviceaccount.com" },
+      { target = "projects/acme-billing", role = "roles/storage.bucketViewer", member = "serviceAccount:symbol-observability@acme-billing.iam.gserviceaccount.com" },
     ])
     error_message = "Security roles must go to the observability identity."
   }
@@ -277,7 +278,7 @@ run "all_modules_project_scope" {
   }
 
   assert {
-    condition     = local.labels == { "symbol-managed" = "true", "symbol-org" = "2", "symbol-template" = "gcp-v2-0-1" }
+    condition     = local.labels == { "symbol-managed" = "true", "symbol-org" = "2", "symbol-template" = "gcp-v2-0-2" }
     error_message = "Labels must be valid GCP label values."
   }
 
@@ -309,7 +310,7 @@ run "finops_only" {
       v               = 2
       org             = "2"
       session         = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
-      template        = "gcp-v2.0.1"
+      template        = "gcp-v2.0.2"
       project         = "acme-billing"
       project_number  = "123456789012"
       organization_id = "987654321"
@@ -411,7 +412,7 @@ run "security_only_folder_scope" {
   }
 
   assert {
-    condition     = length(module.security[0].iam_grants) == 3 && alltrue([for g in module.security[0].iam_grants : g.target == "folders/555"])
+    condition     = length(module.security[0].iam_grants) == 4 && alltrue([for g in module.security[0].iam_grants : g.target == "folders/555"])
     error_message = "Folder scope: security grants on folders/555 only."
   }
 
@@ -460,7 +461,7 @@ run "organization_scope_with_scc" {
   }
 
   assert {
-    condition     = length([for g in module.finops[0].iam_grants : g if g.target == "organizations/987654321"]) == 5 && length([for g in module.security[0].iam_grants : g if g.target == "organizations/987654321"]) == 3
+    condition     = length([for g in module.finops[0].iam_grants : g if g.target == "organizations/987654321"]) == 5 && length([for g in module.security[0].iam_grants : g if g.target == "organizations/987654321"]) == 4
     error_message = "Organization scope: FinOps and security grants on the organisation."
   }
 }

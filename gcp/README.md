@@ -70,9 +70,9 @@ done
    like this:
    ```bash
    bash -c 'set -euo pipefail; d="$HOME/symbol-cloud-connect-1a2b3c4d"; rm -rf "$d";
-   git clone --quiet --depth 1 --branch gcp-v2.0.0 https://github.com/Looyas/symbol-cloud-connect "$d";
+   git clone --quiet --depth 1 --branch gcp-v2.0.1 https://github.com/Looyas/symbol-cloud-connect "$d";
    test "$(git -C "$d" rev-parse HEAD)" = "<commit>" || { echo "Template integrity check failed"; exit 1; };
-   exec "$d/gcp/symbol-setup.sh" --org 2 --session <uuid> --template gcp-v2.0.0
+   exec "$d/gcp/symbol-setup.sh" --org 2 --session <uuid> --template gcp-v2.0.1
      --modules finops,monitoring,security --billing-dataset billing_export --scope project'
    ```
    The clone is pinned to a **tag and its exact commit**: a moved tag or a tampered

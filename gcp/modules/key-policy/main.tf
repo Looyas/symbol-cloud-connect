@@ -79,6 +79,12 @@ locals {
   has_org     = var.organization_id != ""
   read        = var.check_enabled && local.has_org
   exception   = var.allow_exception && local.has_org
+  # The exceptions' names, built from inputs known at plan time. NOT read back
+  # from google_org_policy_policy.name: the provider stores that in its SHORT form
+  # (iam.disableServiceAccountKeyCreation, GetResourceNameFromSelfLink in its
+  # encoder), so a value derived from it changes during apply and Terraform aborts
+  # with "Provider produced inconsistent final plan" (gcp-v2.0.0 with the exception).
+  exception_names = local.exception ? [for c in sort(local.constraints) : "projects/${var.project_id}/policies/${c}"] : []
 }
 
 data "google_client_config" "current" {}
@@ -136,15 +142,19 @@ resource "time_sleep" "propagation" {
   count = local.exception ? 1 : 0
 
   create_duration = "${var.propagation_seconds}s"
+  # Known at plan time (see local.exception_names); the wait starts after the
+  # policies exist because of depends_on, not because of these values.
   triggers = {
-    policies = join(",", sort([for p in google_org_policy_policy.allow_key_creation : p.name]))
+    policies = join(",", local.exception_names)
   }
+
+  depends_on = [google_org_policy_policy.allow_key_creation]
 }
 
 output "ready" {
   description = "Depend on this before creating keys: any exception exists and has propagated."
   value = {
-    exception = [for p in google_org_policy_policy.allow_key_creation : p.name]
+    exception = local.exception_names
     waited    = [for s in time_sleep.propagation : s.id]
   }
 }

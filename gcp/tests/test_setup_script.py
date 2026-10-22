@@ -115,7 +115,7 @@ def stub(tmp_path: Path):
 
 
 def setup_args(*extra: str, modules: str = "finops,monitoring,security") -> list[str]:
-    return ["--org", "2", "--session", SESSION, "--template", "gcp-v2.0.0", "--modules", modules,
+    return ["--org", "2", "--session", SESSION, "--template", "gcp-v2.0.1", "--modules", modules,
             *extra]
 
 
@@ -342,7 +342,7 @@ def test_destroy_without_state_bucket_fails(stub) -> None:
 
 @pytest.mark.parametrize("args, message", [
     (["--org", "a b"], "Invalid --org"),
-    (setup_args()[:2] + ["--session", "x", "--template", "gcp-v2.0.0", "--modules", "finops"],
+    (setup_args()[:2] + ["--session", "x", "--template", "gcp-v2.0.1", "--modules", "finops"],
      "Invalid --session"),
     (setup_args("--scope", "folder:abc"), "Invalid --scope"),
     (setup_args(modules="finops,finops"), "listed twice"),

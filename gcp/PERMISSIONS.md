@@ -1,4 +1,4 @@
-# Permissions (gcp-v2.0.0)
+# Permissions (gcp-v2.0.1)
 
 Two parts: what **you** (the administrator running `symbol-setup.sh`) need, and what
 **Symbol** receives. Every grant is a `google_*_iam_member` (additive): no existing

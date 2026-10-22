@@ -127,7 +127,7 @@ run "all_modules_project_scope" {
       v               = 2
       org             = "2"
       session         = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
-      template        = "gcp-v2.0.0"
+      template        = "gcp-v2.0.1"
       project         = "acme-billing"
       project_number  = "123456789012"
       organization_id = "987654321"
@@ -277,7 +277,7 @@ run "all_modules_project_scope" {
   }
 
   assert {
-    condition     = local.labels == { "symbol-managed" = "true", "symbol-org" = "2", "symbol-template" = "gcp-v2-0-0" }
+    condition     = local.labels == { "symbol-managed" = "true", "symbol-org" = "2", "symbol-template" = "gcp-v2-0-1" }
     error_message = "Labels must be valid GCP label values."
   }
 
@@ -309,7 +309,7 @@ run "finops_only" {
       v               = 2
       org             = "2"
       session         = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
-      template        = "gcp-v2.0.0"
+      template        = "gcp-v2.0.1"
       project         = "acme-billing"
       project_number  = "123456789012"
       organization_id = "987654321"
@@ -591,7 +591,7 @@ run "exception_lifts_both_constraints_for_this_project" {
   }
 
   assert {
-    condition     = module.key_policy.exception_created && module.key_policy.ready.exception == ["projects/acme-billing/policies/iam.disableServiceAccountKeyCreation", "projects/acme-billing/policies/iam.managed.disableServiceAccountKeyCreation"] && length(module.key_policy.ready.waited) == 1
+    condition     = module.key_policy.exception_created && module.key_policy.ready.exception == tolist(["projects/acme-billing/policies/iam.disableServiceAccountKeyCreation", "projects/acme-billing/policies/iam.managed.disableServiceAccountKeyCreation"]) && length(module.key_policy.ready.waited) == 1
     error_message = "With the exception requested, both constraints are lifted on this project, then the keys wait for propagation."
   }
 

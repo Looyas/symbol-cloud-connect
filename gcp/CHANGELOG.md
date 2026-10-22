@@ -4,6 +4,22 @@ Template versions follow `gcp-v<MAJOR>.<MINOR>.<PATCH>` (git tags; Symbol pins t
 commit). Releases are immutable. Any change to a granted role is listed under
 **Permissions**.
 
+## gcp-v2.0.1
+
+### Fixed
+- `--allow-key-creation-exception` aborted the apply with *Provider produced
+  inconsistent final plan* on `module.key_policy.time_sleep.propagation[0]`. Its
+  trigger was built from `google_org_policy_policy.name`, which the google provider
+  rewrites to its short form (`iam.disableServiceAccountKeyCreation`) during apply.
+  The trigger (and the `ready` output) are now built from the project and the
+  constraint names, known at plan time; the pause still waits for the policies
+  (`depends_on`). A failed gcp-v2.0.0 apply resumes from its state when the new
+  command runs: the policies already created are kept (the provider compares
+  `name` by its last segment), and nothing is recreated.
+
+### Permissions
+- Unchanged.
+
 ## gcp-v2.0.0
 
 **Breaking.** One identity model: two service accounts in the customer project with a

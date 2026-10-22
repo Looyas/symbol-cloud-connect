@@ -17,16 +17,15 @@ locals {
 
   needs_finops_identity        = var.enable_finops
   needs_observability_identity = var.enable_monitoring || var.enable_security
-  key_upload                   = var.identity_mode == "key_upload"
 
   # Project scope always means "this project": scope_id is only read for folders and
   # organisations, so a stale value cannot widen a project-scoped setup.
   scope_id = var.scope_type == "project" ? var.project_id : var.scope_id
 
-  # Members granted the roles. key_upload: the service accounts this template creates
-  # in the customer project. symbol_principal: Symbol's per-org service accounts.
-  finops_email         = local.key_upload ? try(module.identity[0].finops_email, null) : var.finops_principal
-  observability_email  = local.key_upload ? try(module.identity[0].observability_email, null) : var.observability_principal
+  # Members granted the roles: the two service accounts this template creates in the
+  # customer project (modules/identity).
+  finops_email         = try(module.identity[0].finops_email, null)
+  observability_email  = try(module.identity[0].observability_email, null)
   finops_member        = "serviceAccount:${coalesce(local.finops_email, "unset")}"
   observability_member = "serviceAccount:${coalesce(local.observability_email, "unset")}"
 
@@ -35,46 +34,6 @@ locals {
     "symbol-managed"  = "true"
     "symbol-org"      = substr(lower(var.symbol_org_id), 0, 63)
     "symbol-template" = replace(var.template_version, ".", "-")
-  }
-}
-
-###############################################################################
-# key_upload: the X.509 certificates Symbol generated for this session (public
-# material, served at the session's public .crt URLs). The postconditions stop the plan
-# when a URL does not answer 200 with exactly one PEM certificate (expired session,
-# wrong URL, proxy page), before any service account is created. Never downloaded in
-# destroy_mode: expired sessions answer 404 and deleting a key needs no certificate.
-###############################################################################
-
-locals {
-  certificate_urls = {
-    finops        = local.needs_finops_identity ? var.finops_certificate_url : ""
-    observability = local.needs_observability_identity ? var.observability_certificate_url : ""
-  }
-  certificate_downloads = local.key_upload && !var.destroy_mode ? { for k, url in local.certificate_urls : k => url if url != "" } : {}
-  certificate_regex     = "^-----BEGIN CERTIFICATE-----\\r?\\n[A-Za-z0-9+/=\\r\\n]+-----END CERTIFICATE-----\\r?\\n?$"
-}
-
-data "http" "certificate" {
-  for_each = local.certificate_downloads
-  url      = each.value
-
-  request_headers = { Accept = "application/x-x509-ca-cert, application/x-pem-file" }
-
-  retry {
-    attempts     = 3
-    min_delay_ms = 1000
-  }
-
-  lifecycle {
-    postcondition {
-      condition     = self.status_code == 200
-      error_message = "Could not download Symbol's ${each.key} certificate (HTTP ${self.status_code}). Setup links expire after 24 hours: start a new setup in Symbol and run the new command."
-    }
-    postcondition {
-      condition     = can(regex(local.certificate_regex, self.response_body))
-      error_message = "The ${each.key} certificate URL did not return a single PEM certificate."
-    }
   }
 }
 
@@ -89,31 +48,6 @@ resource "terraform_data" "preflight" {
     precondition {
       condition     = var.destroy_mode || length(local.enabled_modules) > 0
       error_message = "No module is enabled. Set at least one of enable_finops, enable_monitoring, enable_security (the Symbol launch command sets them for you)."
-    }
-
-    precondition {
-      condition     = var.destroy_mode || local.key_upload || !local.needs_finops_identity || var.finops_principal != ""
-      error_message = "identity_mode = symbol_principal and FinOps is enabled, but finops_principal is empty. Start a new setup in Symbol, or use identity_mode = key_upload."
-    }
-
-    precondition {
-      condition     = var.destroy_mode || local.key_upload || !local.needs_observability_identity || var.observability_principal != ""
-      error_message = "identity_mode = symbol_principal and Monitoring or Security is enabled, but observability_principal is empty. Start a new setup in Symbol, or use identity_mode = key_upload."
-    }
-
-    precondition {
-      condition     = var.destroy_mode || local.key_upload || var.finops_principal == "" || var.finops_principal != var.observability_principal
-      error_message = "finops_principal and observability_principal must be two different service accounts (least privilege: one identity per purpose)."
-    }
-
-    precondition {
-      condition     = var.destroy_mode || !local.key_upload || !local.needs_finops_identity || var.finops_certificate_url != ""
-      error_message = "identity_mode = key_upload and FinOps is enabled, but finops_certificate_url is empty."
-    }
-
-    precondition {
-      condition     = var.destroy_mode || !local.key_upload || !local.needs_observability_identity || var.observability_certificate_url != ""
-      error_message = "identity_mode = key_upload and Monitoring or Security is enabled, but observability_certificate_url is empty."
     }
 
     precondition {
@@ -150,19 +84,50 @@ resource "terraform_data" "preflight" {
 
 ###############################################################################
 # Modules (contract §5.6 table). No module-level depends_on on the preflight: a failing
-# precondition already stops the run at plan time, and depends_on would defer the
-# certificate downloads to apply time.
+# precondition already stops the run at plan time.
+#
+# key_policy runs first: it stops the plan when the organisation forbids key creation
+# (or lifts that for this project, on request), and the identity module waits for it.
+# Its policy reads are data sources of its own, so the identity module's depends_on
+# defers nothing that the plan needs.
 ###############################################################################
+
+module "key_policy" {
+  source = "./modules/key-policy"
+
+  project_id      = var.project_id
+  organization_id = var.organization_id
+  check_enabled   = !var.destroy_mode
+  allow_exception = var.allow_key_creation_exception
+}
+
+# Stops the plan BEFORE anything is created when the organisation forbids key creation
+# on this project and no exception was requested -- with the exact fix in the message.
+resource "terraform_data" "key_creation_gate" {
+  input = {
+    enforced  = module.key_policy.enforced
+    exception = module.key_policy.exception_created
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.destroy_mode || length(module.key_policy.enforced) == 0 || module.key_policy.exception_created
+      error_message = "Service-account key creation is forbidden on project ${var.project_id} by ${join(" and ", module.key_policy.enforced)}. Nothing was created. Fix it in one of two ways, then run the same Symbol command again: (1) an Organization Policy Administrator (roles/orgpolicy.policyAdmin on organisation ${var.organization_id}) sets 'enforce: false' for ${join(" and ", module.key_policy.constraints)} on projects/${var.project_id} only (commands in PERMISSIONS.md, section 'Organisation policy: service-account keys'); or (2) if you hold that role yourself, add --allow-key-creation-exception to the command: this template then creates that exception, and --destroy removes it."
+    }
+  }
+}
 
 module "identity" {
   source = "./modules/identity"
-  count  = local.key_upload && (local.needs_finops_identity || local.needs_observability_identity) ? 1 : 0
+  count  = local.needs_finops_identity || local.needs_observability_identity ? 1 : 0
 
   project_id           = var.project_id
   symbol_org_id        = var.symbol_org_id
   create_finops        = local.needs_finops_identity
   create_observability = local.needs_observability_identity
-  certificates         = { for k, d in data.http.certificate : k => d.response_body }
+  key_rotation_ids     = var.key_rotation_ids
+
+  depends_on = [module.key_policy, terraform_data.key_creation_gate]
 }
 
 module "finops" {
@@ -205,6 +170,13 @@ module "security" {
 ###############################################################################
 # Warnings (check blocks report in plan/apply output but never block a run).
 ###############################################################################
+
+check "key_creation_policy_readable" {
+  assert {
+    condition     = length(module.key_policy.unreadable) == 0
+    error_message = "Could not read the organisation policy ${join(", ", module.key_policy.unreadable)} on ${var.project_id} (you may lack orgpolicy.policies.get, or orgpolicy.googleapis.com is disabled). Continuing: if key creation is forbidden, the apply stops at the service-account keys with FAILED_PRECONDITION -- then run the Symbol command again with --allow-key-creation-exception, or ask an Organization Policy Administrator for an exception on this project."
+  }
+}
 
 check "billing_export" {
   assert {

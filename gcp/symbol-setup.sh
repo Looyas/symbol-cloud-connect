@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# Symbol Cloud Connect for GCP - guided setup (CLOUD-SETUP-CONTRACT-V2 §5.5-§5.6).
+# Symbol Cloud Connect for GCP - guided setup (CLOUD-SETUP-CONTRACT-V2 §5.5-§5.6, gcp-v2).
 #
 # Run from Google Cloud Shell, signed in as an administrator of the project (see
 # PERMISSIONS.md). Symbol shows the exact command; it clones this repository at a pinned
 # tag and commit, then runs:
 #
 #   gcp/symbol-setup.sh --org <org> --session <uuid> --template gcp-vX.Y.Z \
-#     --modules finops,monitoring,security --identity-mode auto|symbol_principal|key_upload \
-#     [--finops-principal <email>] [--observability-principal <email>] \
-#     [--cert-base-url https://<symbol>/api/cloud-connections/setup/public/sessions/<uuid>/keys] \
-#     [--project <project>] [--billing-dataset billing_export] \
-#     [--scope project|folder:<id>|organization:<id>] [--scc] [--state-location US] [--yes]
+#     --modules finops,monitoring,security [--project <project>] \
+#     [--billing-dataset billing_export] [--scope project|folder:<id>|organization:<id>] \
+#     [--scc] [--state-location US] [--allow-key-creation-exception] \
+#     [--rotate finops|observability] [--yes]
 #
 #   gcp/symbol-setup.sh --destroy --org <org> [--project <project>] [--yes]
 #
-# Steps (contract §5.6): 1 project, 2 Terraform, 3 APIs, 4 organisation + org policies ->
-# identity mode, 5 billing detection, 6 state bucket + init, 7 plan / confirm / apply,
-# 8 connection code. Nothing secret is read, written or printed.
+# Steps (contract §5.6): 1 project, 2 Terraform, 3 APIs, 4 organisation + key-creation
+# policy, 5 billing detection, 6 state bucket + init, 7 plan / confirm / apply, 8 the
+# connection code. The code is SECRET: it carries the keys of the two service accounts.
+# It is printed once, for Symbol, and never written to a file by this script.
 set -euo pipefail
 umask 077
 
@@ -43,22 +43,21 @@ readonly RE_ORG='^[A-Za-z0-9_-]{1,64}$'
 readonly RE_UUID='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 readonly RE_TEMPLATE='^gcp-v[0-9]+\.[0-9]+\.[0-9]+$'
 readonly RE_PROJECT='^[a-z][a-z0-9-]{4,28}[a-z0-9]$'
-readonly RE_SA_EMAIL='^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$'
-readonly RE_HTTPS_URL='^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%/-]*)?$'
 readonly RE_DATASET='^[A-Za-z_][A-Za-z0-9_]*$'
 readonly RE_SCOPE='^(project|folder:[0-9]{1,20}|organization:[0-9]{1,20})$'
 readonly RE_LOCATION='^[A-Za-z][A-Za-z0-9-]{1,29}$'
 readonly RE_BILLING_ACCOUNT='^[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}$'
 readonly RE_NUMBER='^[0-9]{1,20}$'
 
+# The organisation policies that forbid creating service-account keys: the legacy
+# boolean constraint and its managed successor. Both are checked, and both are lifted
+# by --allow-key-creation-exception (modules/key-policy).
+readonly KEY_CREATION_CONSTRAINTS=(iam.disableServiceAccountKeyCreation iam.managed.disableServiceAccountKeyCreation)
+
 ORG=""
 SESSION=""
 TEMPLATE=""
 MODULES=""
-IDENTITY_MODE="auto"
-FINOPS_PRINCIPAL=""
-OBSERVABILITY_PRINCIPAL=""
-CERT_BASE_URL=""
 PROJECT=""
 BILLING_DATASET="billing_export"
 SCOPE="project"
@@ -66,6 +65,8 @@ ENABLE_SCC="false"
 STATE_LOCATION="US"
 ASSUME_YES="false"
 DESTROY="false"
+ALLOW_EXCEPTION="false"
+ROTATE=""
 
 TF=""
 WORK_DIR=""
@@ -86,11 +87,13 @@ cleanup() {
   if [[ -n "${WORK_DIR}" && -d "${WORK_DIR}" ]]; then
     rm -rf -- "${WORK_DIR}"
   fi
+  # A saved plan holds the keys once they exist: never leave one behind, even on failure.
+  rm -f -- "${TF_DIR}/symbol.tfplan" "${TF_DIR}/symbol-destroy.tfplan"
 }
 trap cleanup EXIT
 
 usage() {
-  sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 require_match() { # value regex what
@@ -130,10 +133,8 @@ parse_args() {
       --session) need_value "$1" "$#"; SESSION="$2"; shift 2 ;;
       --template) need_value "$1" "$#"; TEMPLATE="$2"; shift 2 ;;
       --modules) need_value "$1" "$#"; MODULES="$2"; shift 2 ;;
-      --identity-mode) need_value "$1" "$#"; IDENTITY_MODE="$2"; shift 2 ;;
-      --finops-principal) need_value "$1" "$#"; FINOPS_PRINCIPAL="$2"; shift 2 ;;
-      --observability-principal) need_value "$1" "$#"; OBSERVABILITY_PRINCIPAL="$2"; shift 2 ;;
-      --cert-base-url) need_value "$1" "$#"; CERT_BASE_URL="${2%/}"; shift 2 ;;
+      --rotate) need_value "$1" "$#"; ROTATE="$2"; shift 2 ;;
+      --allow-key-creation-exception) ALLOW_EXCEPTION="true"; shift ;;
       --project) need_value "$1" "$#"; PROJECT="$2"; shift 2 ;;
       --billing-dataset) need_value "$1" "$#"; BILLING_DATASET="$2"; shift 2 ;;
       --scope) need_value "$1" "$#"; SCOPE="$2"; shift 2 ;;
@@ -178,19 +179,15 @@ validate_setup_args() {
     seen="${seen}${module},"
   done
 
-  case "${IDENTITY_MODE}" in
-    auto | symbol_principal | key_upload) ;;
-    *) die "--identity-mode must be auto, symbol_principal or key_upload" ;;
+  case "${ROTATE}" in
+    "") ;;
+    finops) [[ ",${MODULES}," == *",finops,"* ]] || die "--rotate finops needs the finops module" ;;
+    observability)
+      [[ ",${MODULES}," == *",monitoring,"* || ",${MODULES}," == *",security,"* ]] \
+        || die "--rotate observability needs the monitoring or security module"
+      ;;
+    *) die "--rotate must be finops or observability" ;;
   esac
-  if [[ -n "${FINOPS_PRINCIPAL}" ]]; then
-    require_match "${FINOPS_PRINCIPAL}" "${RE_SA_EMAIL}" "--finops-principal"
-  fi
-  if [[ -n "${OBSERVABILITY_PRINCIPAL}" ]]; then
-    require_match "${OBSERVABILITY_PRINCIPAL}" "${RE_SA_EMAIL}" "--observability-principal"
-  fi
-  if [[ -n "${CERT_BASE_URL}" ]]; then
-    require_match "${CERT_BASE_URL}" "${RE_HTTPS_URL}" "--cert-base-url (must be an https URL)"
-  fi
   require_match "${BILLING_DATASET}" "${RE_DATASET}" "--billing-dataset"
   [[ ${#BILLING_DATASET} -le 1024 ]] || die "--billing-dataset is too long"
   require_match "${SCOPE}" "${RE_SCOPE}" "--scope (project, folder:<number> or organization:<number>)"
@@ -345,9 +342,7 @@ enable_apis() {
 # Step 4 -------------------------------------------------------------------
 
 ORGANIZATION_ID=""
-DRS_STATE="unknown"         # allow_all | restricted | unknown
-KEY_UPLOAD_STATE="unknown"  # allowed | disabled | unknown
-SELECTED_MODE=""
+KEY_CREATION_BLOCKERS="" # the key-creation constraints enforced on the project
 SCOPE_TYPE="project"
 SCOPE_ID=""
 
@@ -357,6 +352,7 @@ detect_organization() {
   if [[ -n "${ORGANIZATION_ID}" ]]; then
     require_match "${ORGANIZATION_ID}" "${RE_NUMBER}" "organisation id"
     info "Organisation: ${ORGANIZATION_ID}"
+    # The template reads the key-creation policy through this API (modules/key-policy).
     gcloud services enable --project="${PROJECT}" orgpolicy.googleapis.com >/dev/null 2>&1 \
       || warn "Could not enable orgpolicy.googleapis.com; organisation policies may not be readable."
   else
@@ -364,120 +360,79 @@ detect_organization() {
   fi
 }
 
-# Prints one word for the effective policy of a constraint on the project:
-#   boolean constraints: enforced | not_enforced | unknown
-#   list constraints:    allow_all | restricted | unknown
-# Reads Org Policy v2 (gcloud org-policies describe --effective) and falls back to the
-# v1 format (gcloud resource-manager org-policies describe --effective).
-policy_state() { # constraint kind(boolean|list)
+# Prints one word for the effective policy of a boolean constraint on the project:
+# enforced | not_enforced | unknown. Reads Org Policy v2 (gcloud org-policies describe
+# --effective) and falls back to the v1 format (gcloud resource-manager org-policies
+# describe --effective).
+policy_state() { # constraint
   local json=""
   json="$(gcloud org-policies describe "$1" --effective --project="${PROJECT}" --format=json 2>/dev/null || true)"
   if [[ -z "${json}" ]]; then
     json="$(gcloud resource-manager org-policies describe "constraints/$1" --effective --project="${PROJECT}" --format=json 2>/dev/null || true)"
   fi
   if [[ -z "${json}" ]]; then
-    # NOT_FOUND on a boolean effective policy means the default (not enforced) for
-    # legacy constraints; an unreadable policy is reported as unknown by the caller.
     printf 'unknown\n'
     return 0
   fi
   printf '%s' "${json}" | python3 -c '
 import json, sys
-kind = sys.argv[1]
 try:
     p = json.load(sys.stdin)
 except ValueError:
     print("unknown"); sys.exit(0)
 rules = (p.get("spec") or {}).get("rules")
 if rules is not None:                                   # Org Policy v2
-    if kind == "boolean":
-        print("enforced" if any(r.get("enforce") is True for r in rules) else "not_enforced")
-    else:
-        if not rules or any(r.get("allowAll") is True and not r.get("condition") for r in rules):
-            print("allow_all")
-        else:
-            print("restricted")
-    sys.exit(0)
-if "booleanPolicy" in p or kind == "boolean" and "listPolicy" not in p:   # v1 boolean
+    print("enforced" if any(r.get("enforce") is True for r in rules) else "not_enforced")
+else:                                                   # v1 boolean policy
     print("enforced" if (p.get("booleanPolicy") or {}).get("enforced") is True else "not_enforced")
-    sys.exit(0)
-lp = p.get("listPolicy")
-if lp is None:
-    print("allow_all")                                  # no policy = default = allow all
-elif lp.get("allValues") == "ALLOW":
-    print("allow_all")
-elif lp.get("allowedValues") or lp.get("deniedValues") or lp.get("allValues") == "DENY":
-    print("restricted")
-else:
-    print("allow_all")
-' "$2"
+'
 }
 
-detect_org_policies() {
-  if [[ -z "${ORGANIZATION_ID}" ]]; then
-    DRS_STATE="allow_all"
-    KEY_UPLOAD_STATE="allowed"
-    return 0
-  fi
-  local drs drs_managed upload upload_managed
-  drs="$(policy_state iam.allowedPolicyMemberDomains list)"
-  drs_managed="$(policy_state iam.managed.allowedPolicyMemberDomains boolean)"
-  upload="$(policy_state iam.disableServiceAccountKeyUpload boolean)"
-  upload_managed="$(policy_state iam.managed.disableServiceAccountKeyUpload boolean)"
+# Step 4: may this project create service-account keys? Checked here FIRST, so a
+# forbidden project stops before Terraform is even initialised, with the exact
+# commands; the template checks again (modules/key-policy) and is the authority.
+check_key_creation_policy() {
+  [[ -n "${ORGANIZATION_ID}" ]] || return 0 # no organisation, no organisation policy
+  local constraint state unknown=""
+  KEY_CREATION_BLOCKERS=""
+  for constraint in "${KEY_CREATION_CONSTRAINTS[@]}"; do
+    state="$(policy_state "${constraint}")"
+    note "${constraint}: ${state}"
+    case "${state}" in
+      enforced) KEY_CREATION_BLOCKERS="${KEY_CREATION_BLOCKERS:+${KEY_CREATION_BLOCKERS} }${constraint}" ;;
+      unknown) unknown="${unknown:+${unknown} }${constraint}" ;;
+    esac
+  done
 
-  if [[ "${drs}" == "restricted" || "${drs_managed}" == "enforced" ]]; then
-    DRS_STATE="restricted"
-  elif [[ "${drs}" == "allow_all" ]]; then
-    DRS_STATE="allow_all"
+  if [[ -n "${KEY_CREATION_BLOCKERS}" ]]; then
+    if [[ "${ALLOW_EXCEPTION}" == "true" ]]; then
+      info "Key creation is forbidden by ${KEY_CREATION_BLOCKERS}: the template creates an exception on ${PROJECT} only (--allow-key-creation-exception; --destroy removes it)."
+      return 0
+    fi
+    print_key_policy_fix
+    die "Service-account key creation is forbidden on ${PROJECT} by ${KEY_CREATION_BLOCKERS}. Nothing was changed."
   fi
-  if [[ "${upload}" == "enforced" || "${upload_managed}" == "enforced" ]]; then
-    KEY_UPLOAD_STATE="disabled"
-  elif [[ "${upload}" == "not_enforced" || "${upload_managed}" == "not_enforced" ]]; then
-    KEY_UPLOAD_STATE="allowed"
+  if [[ -n "${unknown}" ]]; then
+    warn "Could not read ${unknown} on ${PROJECT} (you may lack orgpolicy.policies.get). Continuing: if key creation is forbidden, the apply stops at the keys; then run this command again with --allow-key-creation-exception, or ask an Organization Policy Administrator for an exception on this project."
   fi
-  note "iam.allowedPolicyMemberDomains: ${drs} (managed variant: ${drs_managed})"
-  note "iam.disableServiceAccountKeyUpload: ${upload} (managed variant: ${upload_managed})"
 }
 
-select_identity_mode() {
-  local principals_ready="false" certs_ready="false"
-  if { ! needs_finops || [[ -n "${FINOPS_PRINCIPAL}" ]]; } && { ! needs_observability || [[ -n "${OBSERVABILITY_PRINCIPAL}" ]]; }; then
-    principals_ready="true"
-  fi
-  [[ -n "${CERT_BASE_URL}" ]] && certs_ready="true"
-
-  case "${IDENTITY_MODE}" in
-    symbol_principal)
-      [[ "${principals_ready}" == "true" ]] || die "identity mode symbol_principal, but Symbol's principals were not passed. Start a new setup in Symbol."
-      if [[ "${DRS_STATE}" == "restricted" ]]; then
-        warn "Domain restricted sharing (iam.allowedPolicyMemberDomains) is enforced on ${PROJECT}. Granting roles to Symbol's service accounts will fail unless your organisation allows Symbol's Google Workspace customer ID. Ask Symbol for key-upload mode otherwise."
-      fi
-      SELECTED_MODE="symbol_principal"
-      ;;
-    key_upload)
-      [[ "${certs_ready}" == "true" ]] || die "identity mode key_upload, but --cert-base-url was not passed. Start a new setup in Symbol."
-      [[ "${KEY_UPLOAD_STATE}" != "disabled" ]] || die "Service account key upload is disabled by iam.disableServiceAccountKeyUpload (or iam.managed.disableServiceAccountKeyUpload) on ${PROJECT}. Use Symbol-principal mode, or ask your organisation administrator for an exception on this project."
-      SELECTED_MODE="key_upload"
-      ;;
-    auto)
-      if [[ "${principals_ready}" == "true" && "${DRS_STATE}" != "restricted" ]]; then
-        SELECTED_MODE="symbol_principal"
-        if [[ "${DRS_STATE}" == "unknown" ]]; then
-          note "Could not read iam.allowedPolicyMemberDomains (you may lack orgpolicy.policy.get); trying Symbol-principal mode."
-        fi
-      elif [[ "${certs_ready}" == "true" && "${KEY_UPLOAD_STATE}" != "disabled" ]]; then
-        SELECTED_MODE="key_upload"
-        if [[ "${DRS_STATE}" == "restricted" ]]; then
-          note "Domain restricted sharing is enforced: roles cannot be granted to Symbol's own service accounts"
-          note "(this script cannot tell whether Symbol's customer ID is in your allow-list), so key-upload mode is used:"
-          note "two service accounts are created in ${PROJECT} with Symbol's public certificates as their keys."
-        fi
-      else
-        die "No identity mode is possible: iam.allowedPolicyMemberDomains blocks Symbol's principals$([[ "${principals_ready}" == "true" ]] || printf ' (or none was prepared)') and iam.disableServiceAccountKeyUpload / iam.managed.disableServiceAccountKeyUpload blocks key upload$([[ "${certs_ready}" == "true" ]] || printf ' (or no certificate was prepared)'). Ask your organisation administrator to allow Symbol's customer ID or key upload on ${PROJECT}."
-      fi
-      ;;
-  esac
-  info "Identity mode: ${SELECTED_MODE}"
+print_key_policy_fix() {
+  local constraint
+  printf '\n' >&2
+  note "Symbol needs one key per service account, and your organisation forbids service-account keys."
+  note "An Organization Policy Administrator (roles/orgpolicy.policyAdmin on organisation ${ORGANIZATION_ID})"
+  note "can allow them on THIS project only, from Cloud Shell:"
+  printf '\n' >&2
+  for constraint in "${KEY_CREATION_CONSTRAINTS[@]}"; do
+    printf "    printf 'name: projects/%s/policies/%s\\\\nspec:\\\\n  rules:\\\\n  - enforce: false\\\\n' > symbol-allow-keys.yaml\n" "${PROJECT}" "${constraint}" >&2
+    printf '    gcloud org-policies set-policy symbol-allow-keys.yaml\n' >&2
+  done
+  printf '\n' >&2
+  note "Then run the same Symbol command again. If you hold that role yourself, add"
+  note "--allow-key-creation-exception to the command instead: the template creates the same"
+  note "exception, and --destroy removes it."
+  printf '\n' >&2
 }
 
 parse_scope() {
@@ -581,6 +536,30 @@ VAR_FILE=""
 
 json_bool() { [[ "$1" == "true" ]] && printf 'true' || printf 'false'; }
 
+# The key_rotation_ids of the previous run (saved next to the state), with --rotate's
+# identity set to this session: a plain re-run keeps every key Symbol holds, and only
+# an explicit rotation replaces one. Prints a JSON object.
+resolve_rotation_ids() {
+  local saved=""
+  saved="$(gcloud storage cat "gs://${STATE_BUCKET}/${STATE_PREFIX}/symbol.tfvars.json" 2>/dev/null || true)"
+  printf '%s' "${saved}" | python3 -c '
+import json, re, sys
+rotate, session = sys.argv[1], sys.argv[2]
+try:
+    previous = json.load(sys.stdin).get("key_rotation_ids") or {}
+except (ValueError, AttributeError):
+    previous = {}
+if not isinstance(previous, dict):
+    previous = {}
+ids = {k: v for k, v in previous.items()
+       if k in ("finops", "observability") and isinstance(v, str)
+       and re.fullmatch(r"[A-Za-z0-9-]{1,64}", v)}
+if rotate:
+    ids[rotate] = session
+print(json.dumps(ids, sort_keys=True))
+' "${ROTATE}" "${SESSION}"
+}
+
 write_var_file() {
   local create_dataset create_view
   create_dataset="false"
@@ -594,11 +573,8 @@ write_var_file() {
       create_view="true"
     fi
   fi
-  local cert_finops="" cert_obs=""
-  if [[ "${SELECTED_MODE}" == "key_upload" ]]; then
-    cert_finops="${CERT_BASE_URL}/finops.crt"
-    cert_obs="${CERT_BASE_URL}/observability.crt"
-  fi
+  local rotation_ids
+  rotation_ids="$(resolve_rotation_ids)"
 
   VAR_FILE="${WORK_DIR}/symbol.tfvars.json"
   # Every value below was validated against a strict pattern (no quote, backslash or
@@ -613,11 +589,8 @@ write_var_file() {
   "enable_finops": $(needs_finops && printf 'true' || printf 'false'),
   "enable_monitoring": $(has_module monitoring && printf 'true' || printf 'false'),
   "enable_security": $(has_module security && printf 'true' || printf 'false'),
-  "identity_mode": "${SELECTED_MODE}",
-  "finops_principal": "$([[ "${SELECTED_MODE}" == "symbol_principal" ]] && printf '%s' "${FINOPS_PRINCIPAL}")",
-  "observability_principal": "$([[ "${SELECTED_MODE}" == "symbol_principal" ]] && printf '%s' "${OBSERVABILITY_PRINCIPAL}")",
-  "finops_certificate_url": "${cert_finops}",
-  "observability_certificate_url": "${cert_obs}",
+  "allow_key_creation_exception": $(json_bool "${ALLOW_EXCEPTION}"),
+  "key_rotation_ids": ${rotation_ids},
   "scope_type": "${SCOPE_TYPE}",
   "scope_id": "${SCOPE_ID}",
   "billing_dataset": "${BILLING_DATASET}",
@@ -651,14 +624,16 @@ plan_and_apply() {
 print_code() {
   local code line
   code="$(cd "${TF_DIR}" && "${TF}" output -raw symbol_connection_code)"
-  [[ "${code}" == SYMBOL-GCP-1.* ]] || die "Unexpected connection code output."
+  [[ "${code}" == SYMBOL-GCP-2.* ]] || die "Unexpected connection code output."
   line="$(printf '%*s' 78 '' | tr ' ' '=')"
   printf '\n%s\n' "${line}"
-  printf '  SYMBOL CONNECTION CODE - copy the whole line below and paste it into Symbol\n'
+  printf '  SYMBOL CONNECTION CODE - SECRET - copy the whole line below into Symbol only\n'
   printf '%s\n\n' "${line}"
   printf '%s\n\n' "${code}"
   printf '%s\n' "${line}"
-  printf '  It contains identifiers only (no secret). It is accepted once, for this setup session.\n'
+  printf '  It contains the keys of the Symbol service accounts: paste it into Symbol and\n'
+  printf '  nowhere else (no chat, no ticket). It is accepted once, for this setup session.\n'
+  printf '  Once Symbol shows the setup as received, clear this terminal (type: clear).\n'
   printf '%s\n\n' "${line}"
   (cd "${TF_DIR}" && "${TF}" output -raw symbol_connection_summary) || true
   printf '\n'
@@ -690,8 +665,7 @@ setup_flow() {
   ensure_terraform
   enable_apis
   detect_organization
-  detect_org_policies
-  select_identity_mode
+  check_key_creation_policy
   parse_scope
   detect_billing
   ensure_state_bucket true
@@ -710,8 +684,6 @@ destroy_flow() {
     validate_setup_args
     detect_organization
     parse_scope
-    SELECTED_MODE="${IDENTITY_MODE}"
-    [[ "${SELECTED_MODE}" != "auto" ]] || die "Pass --identity-mode symbol_principal or key_upload (the mode used at setup)."
     write_var_file
   fi
 

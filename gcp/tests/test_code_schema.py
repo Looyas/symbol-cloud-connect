@@ -1,16 +1,18 @@
 """Cross-checks of the GCP template outside Terraform (pytest).
 
-1. The connection codes produced by the Terraform test runs (mocked providers) satisfy
-   CLOUD-SETUP-CONTRACT-V2 §5.7 exactly, decoded the way Symbol decodes them; and, when
-   connections-service is checked out next to this repository, its own decoder
-   (app.setup.connection_code.decode) accepts them.
+1. The connection codes produced by the Terraform test runs (mocked providers, FAKE key
+   files) satisfy CLOUD-SETUP-CONTRACT-V2 §5.7 (code version 2) exactly, decoded the way
+   Symbol decodes them; and, when connections-service is checked out next to this
+   repository, its own decoder (app.setup.connection_code.decode) accepts them.
 2. The FOCUS view produces exactly the columns Symbol's GCP reader consumes
    (finops-module/ingestion-service/transformers/gcp_transformer.py).
 3. No authoritative IAM resource (*_iam_policy / *_iam_binding) is ever used.
 
 Codes come from `terraform test -verbose` when Terraform is available (TERRAFORM env
 var or `terraform` on PATH, with `terraform init -backend=false` already run), else from
-tests/fixtures/connection_codes.json. Regenerate the fixture with:
+tests/fixtures/connection_codes.json. The code output is sensitive, so each code-producing
+run is followed by a reveal_<run> run of tests/reveal, which prints it. Regenerate the
+fixture with:
 
     python tests/test_code_schema.py --update-fixtures
 """
@@ -30,13 +32,22 @@ import pytest
 
 GCP_DIR = Path(__file__).resolve().parents[1]
 FIXTURE = GCP_DIR / "tests" / "fixtures" / "connection_codes.json"
-PREFIX = "SYMBOL-GCP-1."
-MAX_LENGTH = 8192
+PREFIX = "SYMBOL-GCP-2."
+CODE_VERSION = 2
+MAX_LENGTH = 16384
 
 TOP_KEYS = {
     "v", "org", "session", "template", "project", "project_number", "organization_id",
-    "scope", "identity_mode", "modules", "principals", "key", "finops", "observability",
+    "scope", "modules", "key", "finops", "observability",
 }
+KEY_KEYS = {"service_account", "key_id", "valid_after", "valid_before", "credentials"}
+#: The fields of a Google service-account key file (TYPE_GOOGLE_CREDENTIALS_FILE).
+CREDENTIAL_KEYS = {
+    "type", "project_id", "private_key_id", "private_key", "client_email", "client_id",
+    "auth_uri", "token_uri", "auth_provider_x509_cert_url", "client_x509_cert_url",
+    "universe_domain",
+}
+TOKEN_URI = "https://oauth2.googleapis.com/token"
 FINOPS_KEYS = {
     "project_id", "dataset", "table", "billing_account_id", "billing_export_detected",
     "focus_view_created",
@@ -50,6 +61,7 @@ RE_UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 RE_PROJECT = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
 RE_SA = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$")
 RE_KEY_ID = re.compile(r"^[0-9a-f]{40}$")
+RE_TIMESTAMP = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$")
 RE_BILLING = re.compile(r"^[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}$")
 RE_DATASET = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,1023}$")
 RE_SUBSCRIPTION = re.compile(r"^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/subscriptions/[A-Za-z][A-Za-z0-9._~%+-]{2,254}$")
@@ -67,7 +79,7 @@ def _terraform() -> str | None:
 
 
 def codes_from_terraform(terraform: str) -> dict[str, str]:
-    """Run the mocked Terraform tests and collect every symbol_connection_code by run."""
+    """Run the mocked Terraform tests and collect every revealed code by its source run."""
     proc = subprocess.run(
         [terraform, "test", "-verbose", "-no-color"],
         cwd=GCP_DIR, capture_output=True, text=True, timeout=1800, check=False,
@@ -81,11 +93,11 @@ def codes_from_terraform(terraform: str) -> dict[str, str]:
         if m:
             run = m.group(1)
             continue
-        m = re.match(r'^symbol_connection_code = "(SYMBOL-GCP-1\.[A-Za-z0-9_-]+)"$', line.strip())
-        if m and run:
-            codes[run] = m.group(1)
+        m = re.match(r'^revealed_code = "(SYMBOL-GCP-2\.[A-Za-z0-9_-]+)"$', line.strip())
+        if m and run and run.startswith("reveal_"):
+            codes[run[len("reveal_"):]] = m.group(1)
     if not codes:
-        raise RuntimeError("no symbol_connection_code found in `terraform test -verbose` output")
+        raise RuntimeError("no revealed_code found in `terraform test -verbose` output")
     return codes
 
 
@@ -116,6 +128,7 @@ def decode(code: str) -> dict:
     normalised = body.replace("-", "+").replace("_", "/")
     data = json.loads(base64.b64decode(normalised + "=" * (-len(normalised) % 4), validate=True))
     assert isinstance(data, dict)
+    assert data.get("v") == CODE_VERSION
     return data
 
 
@@ -142,7 +155,7 @@ def _backend_decoder():
 
 def assert_schema(data: dict) -> None:
     assert set(data) == TOP_KEYS, set(data) ^ TOP_KEYS
-    assert data["v"] == 1 and isinstance(data["v"], int)
+    assert data["v"] == CODE_VERSION and isinstance(data["v"], int)
     assert re.fullmatch(r"[A-Za-z0-9_-]{1,64}", data["org"])
     assert RE_UUID.fullmatch(data["session"])
     assert re.fullmatch(r"gcp-v\d+\.\d+\.\d+", data["template"])
@@ -165,30 +178,28 @@ def assert_schema(data: dict) -> None:
     needs_fin = "finops" in modules
     needs_obs = "monitoring" in modules or "security" in modules
 
-    mode = data["identity_mode"]
-    assert mode in {"symbol_principal", "key_upload"}
-    if mode == "symbol_principal":
-        assert data["key"] is None
-        principals = data["principals"]
-        assert set(principals) == {"finops", "observability"}
-        for identity, needed in (("finops", needs_fin), ("observability", needs_obs)):
-            if needed:
-                assert RE_SA.fullmatch(principals[identity])
-            else:
-                assert principals[identity] is None
-        if needs_fin and needs_obs:
-            assert principals["finops"] != principals["observability"]
-    else:
-        assert data["principals"] is None
-        key = data["key"]
-        assert set(key) == {"finops", "observability"}
-        for identity, needed in (("finops", needs_fin), ("observability", needs_obs)):
-            if needed:
-                assert set(key[identity]) == {"service_account", "key_id"}
-                assert key[identity]["service_account"] == f"symbol-{identity}@{data['project']}.iam.gserviceaccount.com"
-                assert RE_KEY_ID.fullmatch(key[identity]["key_id"])
-            else:
-                assert key[identity] is None
+    key = data["key"]
+    assert set(key) == {"finops", "observability"}
+    for identity, needed in (("finops", needs_fin), ("observability", needs_obs)):
+        if not needed:
+            assert key[identity] is None
+            continue
+        entry = key[identity]
+        assert set(entry) == KEY_KEYS, set(entry) ^ KEY_KEYS
+        email = f"symbol-{identity}@{data['project']}.iam.gserviceaccount.com"
+        assert entry["service_account"] == email
+        assert RE_KEY_ID.fullmatch(entry["key_id"])
+        assert RE_TIMESTAMP.fullmatch(entry["valid_after"]) and RE_TIMESTAMP.fullmatch(entry["valid_before"])
+        credentials = entry["credentials"]
+        assert set(credentials) == CREDENTIAL_KEYS, set(credentials) ^ CREDENTIAL_KEYS
+        assert credentials["type"] == "service_account"
+        assert credentials["project_id"] == data["project"]
+        assert credentials["private_key_id"] == entry["key_id"]
+        assert credentials["client_email"] == email
+        assert credentials["token_uri"] == TOKEN_URI
+        assert isinstance(credentials["private_key"], str) and credentials["private_key"]
+    if needs_fin and needs_obs:
+        assert key["finops"]["key_id"] != key["observability"]["key_id"]
 
     finops = data["finops"]
     if not needs_fin:
@@ -231,13 +242,15 @@ def test_backend_decoder_accepts_code(run: str) -> None:
     backend_decode = _backend_decoder()
     if backend_decode is None:
         pytest.skip("connections-service checkout not found (set SYMBOL_CONNECTIONS_SERVICE)")
-    assert backend_decode(CODES[run], prefix=PREFIX) == decode(CODES[run])
+    assert backend_decode(CODES[run], prefix=PREFIX, version=CODE_VERSION,
+                          max_length=MAX_LENGTH) == decode(CODES[run])
 
 
-def test_both_identity_modes_and_all_scopes_covered() -> None:
+def test_every_module_set_and_scope_is_covered() -> None:
     decoded = [decode(c) for c in CODES.values()]
-    assert {d["identity_mode"] for d in decoded} == {"symbol_principal", "key_upload"}
     assert {d["scope"]["type"] for d in decoded} == {"project", "folder", "organization"}
+    assert {tuple(d["modules"]) for d in decoded} >= {
+        ("finops", "monitoring", "security"), ("finops",), ("monitoring",), ("security",)}
     assert any(d["observability"] and d["observability"]["scc_subscription_id"] for d in decoded)
 
 

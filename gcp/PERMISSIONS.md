@@ -1,15 +1,16 @@
-# Permissions (gcp-v1.0.0)
+# Permissions (gcp-v2.0.0)
 
 Two parts: what **you** (the administrator running `symbol-setup.sh`) need, and what
 **Symbol** receives. Every grant is a `google_*_iam_member` (additive): no existing
 binding or policy is ever replaced, and destroy removes exactly the members it added.
 
-"FinOps identity" and "observability identity" are, depending on the identity mode:
+The two identities are service accounts the template creates **in your project**, each
+with one Google-generated key held by Symbol:
 
-| | `symbol_principal` | `key_upload` |
-|---|---|---|
-| FinOps identity | `sym-<org>-fin@<symbol-project>.iam.gserviceaccount.com` (Symbol-owned, dedicated to your Symbol organisation) | `symbol-finops@<project>.iam.gserviceaccount.com` |
-| Observability identity | `sym-<org>-obs@<symbol-project>.iam.gserviceaccount.com` | `symbol-observability@<project>.iam.gserviceaccount.com` |
+| | Service account |
+|---|---|
+| FinOps identity | `symbol-finops@<project>.iam.gserviceaccount.com` |
+| Observability identity | `symbol-observability@<project>.iam.gserviceaccount.com` |
 
 ## 1. What the administrator needs
 
@@ -23,6 +24,8 @@ least-privilege alternative.
 | `roles/serviceusage.serviceUsageAdmin` | Enable the APIs (script step 3 and `google_project_service`). Also gives `serviceusage.services.use`: the provider bills every call to the project (`user_project_override`). |
 | `roles/storage.admin` | Create and configure the state bucket `gs://<project>-symbol-tfstate`, read/write the state. |
 | `roles/resourcemanager.projectIamAdmin` | Add the project-level `iam_member` grants (and the scope grants with `--scope project`). |
+| `roles/iam.serviceAccountAdmin` | Create `symbol-finops` / `symbol-observability`. |
+| `roles/iam.serviceAccountKeyAdmin` | Create (and on rotation or destroy, delete) their keys. |
 | `roles/browser` (or any role with `resourcemanager.projects.get`) | Read the project, its ancestors and billing info. |
 
 ### Per module
@@ -34,7 +37,6 @@ least-privilege alternative.
 | monitoring | `roles/pubsub.admin` | Topics, subscriptions, their IAM members |
 | monitoring | `roles/logging.configWriter` (at the scope: project, folder or organisation) | Create the `symbol-audit-sink` |
 | monitoring + `--scc` | `roles/securitycenter.notificationConfigEditor` on the organisation | Create the SCC notification config |
-| key_upload | `roles/iam.serviceAccountAdmin` and `roles/iam.serviceAccountKeyAdmin` | Create `symbol-finops` / `symbol-observability` and upload Symbol's certificates |
 
 ### Per scope
 
@@ -44,11 +46,29 @@ least-privilege alternative.
 | `folder:<id>` | `roles/resourcemanager.folderIamAdmin` on the folder; `roles/logging.configWriter` on the folder | Folder grants, folder sink |
 | `organization:<id>` | `roles/resourcemanager.organizationAdmin` on the organisation (for `setIamPolicy`); `roles/logging.configWriter` on the organisation | Organisation grants, organisation sink |
 
-### Org-policy detection (optional)
+### Organisation policy: service-account keys
 
-`orgpolicy.policy.get` (e.g. `roles/orgpolicy.policyViewer` on the organisation). Without
-it the script cannot read the effective policies; in `auto` mode it then tries
-`symbol_principal` and says so.
+| Need | Role | Why |
+|---|---|---|
+| Read the key-creation policy (recommended) | `roles/orgpolicy.policyViewer` on the organisation (`orgpolicy.policies.get`) | The script and the template read the **effective** `iam.disableServiceAccountKeyCreation` and `iam.managed.disableServiceAccountKeyCreation` on the project. Without it they warn and continue; Google's answer at key creation decides. |
+| `--allow-key-creation-exception` only | `roles/orgpolicy.policyAdmin` on the **organisation** (the role cannot be granted lower) | The template creates `projects/<project>/policies/<constraint>` with `enforce: false` for both constraints, and `--destroy` deletes them. Nothing else is changed: the organisation keeps its policy for every other project. |
+
+Without that role, an Organization Policy Administrator runs, once, for your project:
+
+```bash
+for c in iam.disableServiceAccountKeyCreation iam.managed.disableServiceAccountKeyCreation; do
+  printf 'name: projects/<PROJECT>/policies/%s
+spec:
+  rules:
+  - enforce: false
+' "$c" > symbol-allow-keys.yaml
+  gcloud org-policies set-policy symbol-allow-keys.yaml
+done
+```
+
+Lifting it afterwards (`gcloud org-policies delete <constraint> --project=<PROJECT>`) does
+not revoke keys that already exist; it only forbids creating new ones (a rotation would
+then need the exception again).
 
 ## 2. What Symbol receives
 
@@ -58,7 +78,7 @@ it the script cannot read the effective policies; in `auto` mode it then tries
 |---|---|---|
 | `roles/bigquery.dataViewer` | dataset `<project>.billing_export` | Read `gcp_focus_v1` and the export table it selects from (same dataset, so no authorized view is needed) - ingestion-service |
 | `roles/bigquery.jobUser` | project `<project>` | Run the ingestion queries; **jobs are billed to your project** |
-| `roles/serviceusage.serviceUsageConsumer` | project `<project>` | `serviceusage.services.use`: every Symbol call sets `<project>` as quota project (`x-goog-user-project`), in both identity modes |
+| `roles/serviceusage.serviceUsageConsumer` | project `<project>` | `serviceusage.services.use`: every Symbol call sets `<project>` as quota project (`x-goog-user-project`) |
 | `roles/browser` | scope | List/get projects and folders (budget scopes, billing info, hierarchy) - budget-system, cloud-api-rec |
 | `roles/compute.viewer` | scope | Instances, disks, addresses, zones/regions - inventory-collector, cloud-api-rec |
 | `roles/recommender.viewer` | scope | `get`/`list` on every project-level recommender and insight, including cost (`cloudCostGeneral*`) and CUD (`usageCommitment*`, `spendBasedCommitment*`) - cloud-api-rec ([role reference](https://cloud.google.com/iam/docs/roles-permissions/recommender)) |
@@ -100,12 +120,12 @@ publish to the topics.
 | `roles/iam.securityReviewer` | List and read every IAM allow policy (`getIamPolicy` on all resource types) |
 | `roles/cloudasset.viewer` | `searchAllResources`, `searchAllIamPolicies` across the scope |
 
-### key_upload only
+### The identities themselves
 
 | Object | Setting |
 |---|---|
-| `symbol-finops`, `symbol-observability` service accounts | No role other than the grants above; no `iam.serviceAccountUser` / token creator for anyone |
-| One key each | `public_key_data` = base64 of Symbol's session certificate (RSA-2048, X.509, 2 years). No private key is ever created in GCP or present in Terraform state |
+| `symbol-finops`, `symbol-observability` service accounts | No role other than the grants above; no `iam.serviceAccountUser` / Token Creator for anyone |
+| One key each | Created by Google (`KEY_ALG_RSA_2048`, `TYPE_GOOGLE_CREDENTIALS_FILE`); delivered to Symbol in the connection code and kept in Symbol's vault; replaced only by `--rotate`; deleted by `--destroy` |
 
 ## Notes
 
@@ -116,4 +136,5 @@ publish to the topics.
   hardening candidate for a later version.
 - `symbol_egress_cidrs` is not used: GCP IAM has no per-principal source-IP condition
   outside VPC Service Controls access levels, which this template does not create.
-  In `symbol_principal` mode the principals cannot be used outside Symbol (no key exists).
+  The keys are therefore usable from anywhere: keep the connection code secret, and
+  delete a key at once (console) if you suspect it leaked.

@@ -20,6 +20,10 @@ terraform {
       source  = "hashicorp/http"
       version = "3.6.2"
     }
+    time = {
+      source  = "hashicorp/time"
+      version = "0.13.1"
+    }
   }
 
   # Partial configuration: symbol-setup.sh passes

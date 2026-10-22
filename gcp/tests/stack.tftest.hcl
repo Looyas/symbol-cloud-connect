@@ -5,11 +5,21 @@
 # Every run that checks the connection code decodes it exactly like Symbol's decoder:
 # strip the prefix, base64url -> standard alphabet, re-pad, base64decode, jsondecode;
 # then compares the WHOLE object, so any extra, missing or renamed key fails (§5.7).
+#
+# The key files are FAKE (their "private_key" is a placeholder string, not a key): the
+# google provider is mocked, and the overrides below give each key a deterministic id
+# and key file. The reveal_* runs print the codes for tests/test_code_schema.py.
 
 mock_provider "google" {
   mock_data "google_project" {
     defaults = {
       number = "123456789012"
+    }
+  }
+
+  mock_data "google_client_config" {
+    defaults = {
+      access_token = "mock-access-token"
     }
   }
 
@@ -38,16 +48,19 @@ mock_provider "google" {
   }
 }
 
+# Org Policy v2 effective policies: key creation allowed, unless a run overrides it.
 mock_provider "http" {
   mock_data "http" {
     defaults = {
       status_code   = 200
-      response_body = "-----BEGIN CERTIFICATE-----\nMIIBszCCAVmgAwIBAgIUTest+/=\n-----END CERTIFICATE-----\n"
+      response_body = "{\"name\":\"projects/123456789012/policies/iam.disableServiceAccountKeyCreation\",\"spec\":{\"rules\":[{\"enforce\":false}]}}"
     }
   }
 }
 
-# Service accounts and keys created in key_upload mode: deterministic e-mails and key ids.
+mock_provider "time" {}
+
+# Service accounts and keys: deterministic e-mails, key ids and (fake) key files.
 override_resource {
   target = module.identity[0].google_service_account.this["finops"]
   values = {
@@ -67,14 +80,20 @@ override_resource {
 override_resource {
   target = module.identity[0].google_service_account_key.this["finops"]
   values = {
-    name = "projects/acme-billing/serviceAccounts/symbol-finops@acme-billing.iam.gserviceaccount.com/keys/0123456789abcdef0123456789abcdef01234567"
+    name         = "projects/acme-billing/serviceAccounts/symbol-finops@acme-billing.iam.gserviceaccount.com/keys/0123456789abcdef0123456789abcdef01234567"
+    private_key  = "eyJ0eXBlIjoic2VydmljZV9hY2NvdW50IiwicHJvamVjdF9pZCI6ImFjbWUtYmlsbGluZyIsInByaXZhdGVfa2V5X2lkIjoiMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2NyIsInByaXZhdGVfa2V5IjoiZmFrZS1wcml2YXRlLWtleS1vZi1maW5vcHMtZm9yLXRlc3RzIiwiY2xpZW50X2VtYWlsIjoic3ltYm9sLWZpbm9wc0BhY21lLWJpbGxpbmcuaWFtLmdzZXJ2aWNlYWNjb3VudC5jb20iLCJjbGllbnRfaWQiOiIxMDAwMDAwMDAwMDAwMDAwMDAwMDEiLCJhdXRoX3VyaSI6Imh0dHBzOi8vYWNjb3VudHMuZ29vZ2xlLmNvbS9vL29hdXRoMi9hdXRoIiwidG9rZW5fdXJpIjoiaHR0cHM6Ly9vYXV0aDIuZ29vZ2xlYXBpcy5jb20vdG9rZW4iLCJhdXRoX3Byb3ZpZGVyX3g1MDlfY2VydF91cmwiOiJodHRwczovL3d3dy5nb29nbGVhcGlzLmNvbS9vYXV0aDIvdjEvY2VydHMiLCJjbGllbnRfeDUwOV9jZXJ0X3VybCI6Imh0dHBzOi8vd3d3Lmdvb2dsZWFwaXMuY29tL3JvYm90L3YxL21ldGFkYXRhL3g1MDkvc3ltYm9sLWZpbm9wcyU0MGFjbWUtYmlsbGluZy5pYW0uZ3NlcnZpY2VhY2NvdW50LmNvbSIsInVuaXZlcnNlX2RvbWFpbiI6Imdvb2dsZWFwaXMuY29tIn0="
+    valid_after  = "2026-10-22T09:00:00Z"
+    valid_before = "9999-12-31T23:59:59Z"
   }
 }
 
 override_resource {
   target = module.identity[0].google_service_account_key.this["observability"]
   values = {
-    name = "projects/acme-billing/serviceAccounts/symbol-observability@acme-billing.iam.gserviceaccount.com/keys/fedcba9876543210fedcba9876543210fedcba98"
+    name         = "projects/acme-billing/serviceAccounts/symbol-observability@acme-billing.iam.gserviceaccount.com/keys/fedcba9876543210fedcba9876543210fedcba98"
+    private_key  = "eyJ0eXBlIjoic2VydmljZV9hY2NvdW50IiwicHJvamVjdF9pZCI6ImFjbWUtYmlsbGluZyIsInByaXZhdGVfa2V5X2lkIjoiZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTBmZWRjYmE5OCIsInByaXZhdGVfa2V5IjoiZmFrZS1wcml2YXRlLWtleS1vZi1vYnNlcnZhYmlsaXR5LWZvci10ZXN0cyIsImNsaWVudF9lbWFpbCI6InN5bWJvbC1vYnNlcnZhYmlsaXR5QGFjbWUtYmlsbGluZy5pYW0uZ3NlcnZpY2VhY2NvdW50LmNvbSIsImNsaWVudF9pZCI6IjEwMDAwMDAwMDAwMDAwMDAwMDAwMiIsImF1dGhfdXJpIjoiaHR0cHM6Ly9hY2NvdW50cy5nb29nbGUuY29tL28vb2F1dGgyL2F1dGgiLCJ0b2tlbl91cmkiOiJodHRwczovL29hdXRoMi5nb29nbGVhcGlzLmNvbS90b2tlbiIsImF1dGhfcHJvdmlkZXJfeDUwOV9jZXJ0X3VybCI6Imh0dHBzOi8vd3d3Lmdvb2dsZWFwaXMuY29tL29hdXRoMi92MS9jZXJ0cyIsImNsaWVudF94NTA5X2NlcnRfdXJsIjoiaHR0cHM6Ly93d3cuZ29vZ2xlYXBpcy5jb20vcm9ib3QvdjEvbWV0YWRhdGEveDUwOS9zeW1ib2wtb2JzZXJ2YWJpbGl0eSU0MGFjbWUtYmlsbGluZy5pYW0uZ3NlcnZpY2VhY2NvdW50LmNvbSIsInVuaXZlcnNlX2RvbWFpbiI6Imdvb2dsZWFwaXMuY29tIn0="
+    valid_after  = "2026-10-22T09:00:00Z"
+    valid_before = "9999-12-31T23:59:59Z"
   }
 }
 
@@ -83,9 +102,6 @@ variables {
   setup_session_id        = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
   project_id              = "acme-billing"
   organization_id         = "987654321"
-  identity_mode           = "symbol_principal"
-  finops_principal        = "sym-2-fin@symbol-prod.iam.gserviceaccount.com"
-  observability_principal = "sym-2-obs@symbol-prod.iam.gserviceaccount.com"
   billing_account_id      = "0123AB-CDEF45-6789AB"
   billing_export_detected = true
   create_focus_view       = true
@@ -95,34 +111,68 @@ variables {
 }
 
 ###############################################################################
-# Connection code: exact schema, both identity modes, every module combination
+# Connection code: exact schema (v2, keys included), every module combination
 ###############################################################################
 
-run "principal_all_modules_project_scope" {
+run "all_modules_project_scope" {
   command = apply
 
   assert {
-    condition     = startswith(output.symbol_connection_code, "SYMBOL-GCP-1.") && !strcontains(output.symbol_connection_code, "=") && !can(regex("[+/]", trimprefix(output.symbol_connection_code, "SYMBOL-GCP-1.")))
-    error_message = "The code must be SYMBOL-GCP-1. + unpadded base64url."
+    condition     = startswith(nonsensitive(output.symbol_connection_code), "SYMBOL-GCP-2.") && !strcontains(nonsensitive(output.symbol_connection_code), "=") && !can(regex("[+/]", trimprefix(nonsensitive(output.symbol_connection_code), "SYMBOL-GCP-2.")))
+    error_message = "The code must be SYMBOL-GCP-2. + unpadded base64url."
   }
 
   assert {
-    condition = jsondecode(base64decode(format("%s%s", replace(replace(trimprefix(output.symbol_connection_code, "SYMBOL-GCP-1."), "-", "+"), "_", "/"), substr("===", 0, (4 - length(trimprefix(output.symbol_connection_code, "SYMBOL-GCP-1.")) % 4) % 4)))) == {
-      v               = 1
+    condition = jsondecode(base64decode(format("%s%s", replace(replace(trimprefix(nonsensitive(output.symbol_connection_code), "SYMBOL-GCP-2."), "-", "+"), "_", "/"), substr("===", 0, (4 - length(trimprefix(nonsensitive(output.symbol_connection_code), "SYMBOL-GCP-2.")) % 4) % 4)))) == {
+      v               = 2
       org             = "2"
       session         = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
-      template        = "gcp-v1.0.0"
+      template        = "gcp-v2.0.0"
       project         = "acme-billing"
       project_number  = "123456789012"
       organization_id = "987654321"
       scope           = { type = "project", id = "acme-billing" }
-      identity_mode   = "symbol_principal"
       modules         = ["finops", "monitoring", "security"]
-      principals = {
-        finops        = "sym-2-fin@symbol-prod.iam.gserviceaccount.com"
-        observability = "sym-2-obs@symbol-prod.iam.gserviceaccount.com"
+      key = {
+        finops = {
+          service_account = "symbol-finops@acme-billing.iam.gserviceaccount.com"
+          key_id          = "0123456789abcdef0123456789abcdef01234567"
+          valid_after     = "2026-10-22T09:00:00Z"
+          valid_before    = "9999-12-31T23:59:59Z"
+          credentials = {
+            type                        = "service_account"
+            project_id                  = "acme-billing"
+            private_key_id              = "0123456789abcdef0123456789abcdef01234567"
+            private_key                 = "fake-private-key-of-finops-for-tests"
+            client_email                = "symbol-finops@acme-billing.iam.gserviceaccount.com"
+            client_id                   = "100000000000000000001"
+            auth_uri                    = "https://accounts.google.com/o/oauth2/auth"
+            token_uri                   = "https://oauth2.googleapis.com/token"
+            auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+            client_x509_cert_url        = "https://www.googleapis.com/robot/v1/metadata/x509/symbol-finops%40acme-billing.iam.gserviceaccount.com"
+            universe_domain             = "googleapis.com"
+          }
+        }
+        observability = {
+          service_account = "symbol-observability@acme-billing.iam.gserviceaccount.com"
+          key_id          = "fedcba9876543210fedcba9876543210fedcba98"
+          valid_after     = "2026-10-22T09:00:00Z"
+          valid_before    = "9999-12-31T23:59:59Z"
+          credentials = {
+            type                        = "service_account"
+            project_id                  = "acme-billing"
+            private_key_id              = "fedcba9876543210fedcba9876543210fedcba98"
+            private_key                 = "fake-private-key-of-observability-for-tests"
+            client_email                = "symbol-observability@acme-billing.iam.gserviceaccount.com"
+            client_id                   = "100000000000000000002"
+            auth_uri                    = "https://accounts.google.com/o/oauth2/auth"
+            token_uri                   = "https://oauth2.googleapis.com/token"
+            auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+            client_x509_cert_url        = "https://www.googleapis.com/robot/v1/metadata/x509/symbol-observability%40acme-billing.iam.gserviceaccount.com"
+            universe_domain             = "googleapis.com"
+          }
+        }
       }
-      key = null
       finops = {
         project_id              = "acme-billing"
         dataset                 = "billing_export"
@@ -139,24 +189,34 @@ run "principal_all_modules_project_scope" {
         audit_scope_id      = "acme-billing"
       }
     }
-    error_message = "The decoded code does not match contract §5.7 exactly."
+    error_message = "The decoded code does not match contract §5.7 (v2) exactly."
   }
 
   assert {
-    condition     = length(module.identity) == 0
-    error_message = "symbol_principal mode must not create service accounts or keys."
+    condition     = module.identity[0].service_account_ids == { finops = "symbol-finops", observability = "symbol-observability" }
+    error_message = "Service account ids must be symbol-finops / symbol-observability (contract §5.7)."
+  }
+
+  assert {
+    condition     = module.identity[0].rotation_ids == { finops = "initial", observability = "initial" }
+    error_message = "Without key_rotation_ids every key is the 'initial' one."
+  }
+
+  assert {
+    condition     = module.key_policy.policy_state == { "iam.disableServiceAccountKeyCreation" = "not_enforced", "iam.managed.disableServiceAccountKeyCreation" = "not_enforced" } && module.key_policy.exception_created == false
+    error_message = "Both key-creation constraints are read; no exception is created when none is enforced."
   }
 
   assert {
     condition = toset(module.finops[0].iam_grants) == toset([
-      { target = "dataset:acme-billing.billing_export", role = "roles/bigquery.dataViewer", member = "serviceAccount:sym-2-fin@symbol-prod.iam.gserviceaccount.com" },
-      { target = "projects/acme-billing", role = "roles/bigquery.jobUser", member = "serviceAccount:sym-2-fin@symbol-prod.iam.gserviceaccount.com" },
-      { target = "projects/acme-billing", role = "roles/serviceusage.serviceUsageConsumer", member = "serviceAccount:sym-2-fin@symbol-prod.iam.gserviceaccount.com" },
-      { target = "projects/acme-billing", role = "roles/browser", member = "serviceAccount:sym-2-fin@symbol-prod.iam.gserviceaccount.com" },
-      { target = "projects/acme-billing", role = "roles/compute.viewer", member = "serviceAccount:sym-2-fin@symbol-prod.iam.gserviceaccount.com" },
-      { target = "projects/acme-billing", role = "roles/recommender.viewer", member = "serviceAccount:sym-2-fin@symbol-prod.iam.gserviceaccount.com" },
-      { target = "projects/acme-billing", role = "roles/cloudasset.viewer", member = "serviceAccount:sym-2-fin@symbol-prod.iam.gserviceaccount.com" },
-      { target = "projects/acme-billing", role = "roles/storage.bucketViewer", member = "serviceAccount:sym-2-fin@symbol-prod.iam.gserviceaccount.com" },
+      { target = "dataset:acme-billing.billing_export", role = "roles/bigquery.dataViewer", member = "serviceAccount:symbol-finops@acme-billing.iam.gserviceaccount.com" },
+      { target = "projects/acme-billing", role = "roles/bigquery.jobUser", member = "serviceAccount:symbol-finops@acme-billing.iam.gserviceaccount.com" },
+      { target = "projects/acme-billing", role = "roles/serviceusage.serviceUsageConsumer", member = "serviceAccount:symbol-finops@acme-billing.iam.gserviceaccount.com" },
+      { target = "projects/acme-billing", role = "roles/browser", member = "serviceAccount:symbol-finops@acme-billing.iam.gserviceaccount.com" },
+      { target = "projects/acme-billing", role = "roles/compute.viewer", member = "serviceAccount:symbol-finops@acme-billing.iam.gserviceaccount.com" },
+      { target = "projects/acme-billing", role = "roles/recommender.viewer", member = "serviceAccount:symbol-finops@acme-billing.iam.gserviceaccount.com" },
+      { target = "projects/acme-billing", role = "roles/cloudasset.viewer", member = "serviceAccount:symbol-finops@acme-billing.iam.gserviceaccount.com" },
+      { target = "projects/acme-billing", role = "roles/storage.bucketViewer", member = "serviceAccount:symbol-finops@acme-billing.iam.gserviceaccount.com" },
     ])
     error_message = "FinOps grants (project scope) differ from contract section 5.6."
   }
@@ -181,9 +241,9 @@ run "principal_all_modules_project_scope" {
 
   assert {
     condition = toset(module.security[0].iam_grants) == toset([
-      { target = "projects/acme-billing", role = "roles/viewer", member = "serviceAccount:sym-2-obs@symbol-prod.iam.gserviceaccount.com" },
-      { target = "projects/acme-billing", role = "roles/iam.securityReviewer", member = "serviceAccount:sym-2-obs@symbol-prod.iam.gserviceaccount.com" },
-      { target = "projects/acme-billing", role = "roles/cloudasset.viewer", member = "serviceAccount:sym-2-obs@symbol-prod.iam.gserviceaccount.com" },
+      { target = "projects/acme-billing", role = "roles/viewer", member = "serviceAccount:symbol-observability@acme-billing.iam.gserviceaccount.com" },
+      { target = "projects/acme-billing", role = "roles/iam.securityReviewer", member = "serviceAccount:symbol-observability@acme-billing.iam.gserviceaccount.com" },
+      { target = "projects/acme-billing", role = "roles/cloudasset.viewer", member = "serviceAccount:symbol-observability@acme-billing.iam.gserviceaccount.com" },
     ])
     error_message = "Security roles must go to the observability identity."
   }
@@ -196,7 +256,7 @@ run "principal_all_modules_project_scope" {
   assert {
     condition = toset(module.monitoring[0].iam_grants) == toset([
       { target = "topics/symbol-monitoring", role = "roles/pubsub.publisher", member = "serviceAccount:service-123456789012@gcp-sa-logging.iam.gserviceaccount.com" },
-      { target = "subscriptions/symbol-monitoring-sub", role = "roles/pubsub.subscriber", member = "serviceAccount:sym-2-obs@symbol-prod.iam.gserviceaccount.com" },
+      { target = "subscriptions/symbol-monitoring-sub", role = "roles/pubsub.subscriber", member = "serviceAccount:symbol-observability@acme-billing.iam.gserviceaccount.com" },
     ])
     error_message = "Pub/Sub grants: sink writer identity publishes, observability identity subscribes, nothing else."
   }
@@ -217,71 +277,22 @@ run "principal_all_modules_project_scope" {
   }
 
   assert {
-    condition     = local.labels == { "symbol-managed" = "true", "symbol-org" = "2", "symbol-template" = "gcp-v1-0-0" }
+    condition     = local.labels == { "symbol-managed" = "true", "symbol-org" = "2", "symbol-template" = "gcp-v2-0-0" }
     error_message = "Labels must be valid GCP label values."
+  }
+
+  assert {
+    condition     = !strcontains(output.symbol_connection_summary, "fake-private-key") && strcontains(output.symbol_connection_summary, "(key 0123456789abcdef0123456789abcdef01234567)")
+    error_message = "The summary names the key ids and never carries a key."
   }
 }
 
-run "key_upload_all_modules" {
-  command = apply
-
+run "reveal_all_modules_project_scope" {
+  module {
+    source = "./tests/reveal"
+  }
   variables {
-    identity_mode                 = "key_upload"
-    finops_principal              = ""
-    observability_principal       = ""
-    finops_certificate_url        = "https://platform.example.com/api/cloud-connections/setup/public/sessions/3f2504e0-4f89-41d3-9a0c-0305e82c3301/keys/finops.crt"
-    observability_certificate_url = "https://platform.example.com/api/cloud-connections/setup/public/sessions/3f2504e0-4f89-41d3-9a0c-0305e82c3301/keys/observability.crt"
-  }
-
-  assert {
-    condition = jsondecode(base64decode(format("%s%s", replace(replace(trimprefix(output.symbol_connection_code, "SYMBOL-GCP-1."), "-", "+"), "_", "/"), substr("===", 0, (4 - length(trimprefix(output.symbol_connection_code, "SYMBOL-GCP-1.")) % 4) % 4)))) == {
-      v               = 1
-      org             = "2"
-      session         = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
-      template        = "gcp-v1.0.0"
-      project         = "acme-billing"
-      project_number  = "123456789012"
-      organization_id = "987654321"
-      scope           = { type = "project", id = "acme-billing" }
-      identity_mode   = "key_upload"
-      modules         = ["finops", "monitoring", "security"]
-      principals      = null
-      key = {
-        finops        = { service_account = "symbol-finops@acme-billing.iam.gserviceaccount.com", key_id = "0123456789abcdef0123456789abcdef01234567" }
-        observability = { service_account = "symbol-observability@acme-billing.iam.gserviceaccount.com", key_id = "fedcba9876543210fedcba9876543210fedcba98" }
-      }
-      finops = {
-        project_id              = "acme-billing"
-        dataset                 = "billing_export"
-        table                   = "gcp_focus_v1"
-        billing_account_id      = "0123AB-CDEF45-6789AB"
-        billing_export_detected = true
-        focus_view_created      = true
-      }
-      observability = {
-        project_id          = "acme-billing"
-        subscription_id     = "projects/acme-billing/subscriptions/symbol-monitoring-sub"
-        scc_subscription_id = null
-        audit_scope_type    = "project"
-        audit_scope_id      = "acme-billing"
-      }
-    }
-    error_message = "key_upload code does not match contract §5.7 / §5.3."
-  }
-
-  assert {
-    condition     = module.identity[0].public_key_data["finops"] == base64encode("-----BEGIN CERTIFICATE-----\nMIIBszCCAVmgAwIBAgIUTest+/=\n-----END CERTIFICATE-----\n")
-    error_message = "public_key_data must be the base64 of the certificate PEM."
-  }
-
-  assert {
-    condition     = module.identity[0].service_account_ids == { finops = "symbol-finops", observability = "symbol-observability" } && toset(keys(data.http.certificate)) == toset(["finops", "observability"])
-    error_message = "Service account ids must be symbol-finops / symbol-observability (contract §5.7 rule 6)."
-  }
-
-  assert {
-    condition     = alltrue([for g in module.finops[0].iam_grants : g.member == "serviceAccount:symbol-finops@acme-billing.iam.gserviceaccount.com"]) && alltrue([for g in module.security[0].iam_grants : g.member == "serviceAccount:symbol-observability@acme-billing.iam.gserviceaccount.com"])
-    error_message = "Grants must target the uploaded-key service accounts."
+    code = run.all_modules_project_scope.symbol_connection_code
   }
 }
 
@@ -294,19 +305,38 @@ run "finops_only" {
   }
 
   assert {
-    condition = jsondecode(base64decode(format("%s%s", replace(replace(trimprefix(output.symbol_connection_code, "SYMBOL-GCP-1."), "-", "+"), "_", "/"), substr("===", 0, (4 - length(trimprefix(output.symbol_connection_code, "SYMBOL-GCP-1.")) % 4) % 4)))) == {
-      v               = 1
+    condition = jsondecode(base64decode(format("%s%s", replace(replace(trimprefix(nonsensitive(output.symbol_connection_code), "SYMBOL-GCP-2."), "-", "+"), "_", "/"), substr("===", 0, (4 - length(trimprefix(nonsensitive(output.symbol_connection_code), "SYMBOL-GCP-2.")) % 4) % 4)))) == {
+      v               = 2
       org             = "2"
       session         = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
-      template        = "gcp-v1.0.0"
+      template        = "gcp-v2.0.0"
       project         = "acme-billing"
       project_number  = "123456789012"
       organization_id = "987654321"
       scope           = { type = "project", id = "acme-billing" }
-      identity_mode   = "symbol_principal"
       modules         = ["finops"]
-      principals      = { finops = "sym-2-fin@symbol-prod.iam.gserviceaccount.com", observability = null }
-      key             = null
+      key = {
+        finops = {
+          service_account = "symbol-finops@acme-billing.iam.gserviceaccount.com"
+          key_id          = "0123456789abcdef0123456789abcdef01234567"
+          valid_after     = "2026-10-22T09:00:00Z"
+          valid_before    = "9999-12-31T23:59:59Z"
+          credentials = {
+            type                        = "service_account"
+            project_id                  = "acme-billing"
+            private_key_id              = "0123456789abcdef0123456789abcdef01234567"
+            private_key                 = "fake-private-key-of-finops-for-tests"
+            client_email                = "symbol-finops@acme-billing.iam.gserviceaccount.com"
+            client_id                   = "100000000000000000001"
+            auth_uri                    = "https://accounts.google.com/o/oauth2/auth"
+            token_uri                   = "https://oauth2.googleapis.com/token"
+            auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+            client_x509_cert_url        = "https://www.googleapis.com/robot/v1/metadata/x509/symbol-finops%40acme-billing.iam.gserviceaccount.com"
+            universe_domain             = "googleapis.com"
+          }
+        }
+        observability = null
+      }
       finops = {
         project_id              = "acme-billing"
         dataset                 = "billing_export"
@@ -319,51 +349,53 @@ run "finops_only" {
     }
     error_message = "Disabled modules (and the unused identity) must be null."
   }
+
+  assert {
+    condition     = keys(module.identity[0].service_account_ids) == ["finops"]
+    error_message = "Only symbol-finops is created when Monitoring and Security are off."
+  }
 }
 
-run "monitoring_only_key_upload_no_finops_identity" {
+run "reveal_finops_only" {
+  module {
+    source = "./tests/reveal"
+  }
+  variables {
+    code = run.finops_only.symbol_connection_code
+  }
+}
+
+run "monitoring_only_no_finops_identity" {
   command = apply
 
   variables {
-    enable_finops                 = false
-    enable_security               = false
-    create_focus_view             = false
-    identity_mode                 = "key_upload"
-    observability_certificate_url = "https://platform.example.com/keys/observability.crt"
+    enable_finops     = false
+    enable_security   = false
+    create_focus_view = false
   }
 
   assert {
-    condition     = keys(module.identity[0].service_account_ids) == ["observability"] && keys(data.http.certificate) == ["observability"]
+    condition     = keys(module.identity[0].service_account_ids) == ["observability"]
     error_message = "Only symbol-observability is created when FinOps is off."
   }
 
   assert {
-    condition = jsondecode(base64decode(format("%s%s", replace(replace(trimprefix(output.symbol_connection_code, "SYMBOL-GCP-1."), "-", "+"), "_", "/"), substr("===", 0, (4 - length(trimprefix(output.symbol_connection_code, "SYMBOL-GCP-1.")) % 4) % 4)))) == {
-      v               = 1
-      org             = "2"
-      session         = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
-      template        = "gcp-v1.0.0"
-      project         = "acme-billing"
-      project_number  = "123456789012"
-      organization_id = "987654321"
-      scope           = { type = "project", id = "acme-billing" }
-      identity_mode   = "key_upload"
-      modules         = ["monitoring"]
-      principals      = null
-      key = {
-        finops        = null
-        observability = { service_account = "symbol-observability@acme-billing.iam.gserviceaccount.com", key_id = "fedcba9876543210fedcba9876543210fedcba98" }
-      }
-      finops = null
-      observability = {
-        project_id          = "acme-billing"
-        subscription_id     = "projects/acme-billing/subscriptions/symbol-monitoring-sub"
-        scc_subscription_id = null
-        audit_scope_type    = "project"
-        audit_scope_id      = "acme-billing"
-      }
-    }
-    error_message = "Monitoring-only key_upload code is wrong."
+    condition     = jsondecode(base64decode(format("%s%s", replace(replace(trimprefix(nonsensitive(output.symbol_connection_code), "SYMBOL-GCP-2."), "-", "+"), "_", "/"), substr("===", 0, (4 - length(trimprefix(nonsensitive(output.symbol_connection_code), "SYMBOL-GCP-2.")) % 4) % 4)))).key.finops == null && jsondecode(base64decode(format("%s%s", replace(replace(trimprefix(nonsensitive(output.symbol_connection_code), "SYMBOL-GCP-2."), "-", "+"), "_", "/"), substr("===", 0, (4 - length(trimprefix(nonsensitive(output.symbol_connection_code), "SYMBOL-GCP-2.")) % 4) % 4)))).key.observability.key_id == "fedcba9876543210fedcba9876543210fedcba98"
+    error_message = "Monitoring-only code: no FinOps key, the observability key."
+  }
+
+  assert {
+    condition     = local.connection.modules == ["monitoring"] && local.connection.finops == null && local.connection.observability.subscription_id == "projects/acme-billing/subscriptions/symbol-monitoring-sub"
+    error_message = "Monitoring-only code is wrong."
+  }
+}
+
+run "reveal_monitoring_only_no_finops_identity" {
+  module {
+    source = "./tests/reveal"
+  }
+  variables {
+    code = run.monitoring_only_no_finops_identity.symbol_connection_code
   }
 }
 
@@ -389,6 +421,15 @@ run "security_only_folder_scope" {
   }
 }
 
+run "reveal_security_only_folder_scope" {
+  module {
+    source = "./tests/reveal"
+  }
+  variables {
+    code = run.security_only_folder_scope.symbol_connection_code
+  }
+}
+
 run "organization_scope_with_scc" {
   command = apply
 
@@ -409,7 +450,7 @@ run "organization_scope_with_scc" {
   }
 
   assert {
-    condition     = module.monitoring[0].scc_organization == "987654321" && contains(module.monitoring[0].iam_grants, { target = "topics/symbol-scc", role = "roles/pubsub.publisher", member = "serviceAccount:service-org-987654321@gcp-sa-scc-notification.iam.gserviceaccount.com" }) && contains(module.monitoring[0].iam_grants, { target = "subscriptions/symbol-scc-sub", role = "roles/pubsub.subscriber", member = "serviceAccount:sym-2-obs@symbol-prod.iam.gserviceaccount.com" })
+    condition     = module.monitoring[0].scc_organization == "987654321" && contains(module.monitoring[0].iam_grants, { target = "topics/symbol-scc", role = "roles/pubsub.publisher", member = "serviceAccount:service-org-987654321@gcp-sa-scc-notification.iam.gserviceaccount.com" }) && contains(module.monitoring[0].iam_grants, { target = "subscriptions/symbol-scc-sub", role = "roles/pubsub.subscriber", member = "serviceAccount:symbol-observability@acme-billing.iam.gserviceaccount.com" })
     error_message = "SCC notification config and its publisher grant are wrong."
   }
 
@@ -421,6 +462,15 @@ run "organization_scope_with_scc" {
   assert {
     condition     = length([for g in module.finops[0].iam_grants : g if g.target == "organizations/987654321"]) == 5 && length([for g in module.security[0].iam_grants : g if g.target == "organizations/987654321"]) == 3
     error_message = "Organization scope: FinOps and security grants on the organisation."
+  }
+}
+
+run "reveal_organization_scope_with_scc" {
+  module {
+    source = "./tests/reveal"
+  }
+  variables {
+    code = run.organization_scope_with_scc.symbol_connection_code
   }
 }
 
@@ -467,44 +517,142 @@ run "dataset_created_without_export" {
   expect_failures = [check.billing_export]
 }
 
-run "destroy_mode_skips_downloads_and_checks" {
-  command = plan
-
-  variables {
-    identity_mode           = "key_upload"
-    finops_principal        = ""
-    observability_principal = ""
-    destroy_mode            = true
+run "reveal_dataset_created_without_export" {
+  module {
+    source = "./tests/reveal"
   }
-
-  assert {
-    condition     = length(data.http.certificate) == 0
-    error_message = "destroy_mode must not download certificates (expired sessions answer 404)."
+  variables {
+    code = run.dataset_created_without_export.symbol_connection_code
   }
 }
 
 ###############################################################################
-# Certificate download failures
+# Key rotation: only the identity whose rotation id changes gets a new key
 ###############################################################################
 
-run "certificate_404_fails" {
+run "rotation_ids_reach_the_keys" {
   command = plan
 
   variables {
-    identity_mode                 = "key_upload"
-    finops_certificate_url        = "https://platform.example.com/keys/finops.crt"
-    observability_certificate_url = "https://platform.example.com/keys/observability.crt"
+    key_rotation_ids = { finops = "8e3c3a6a-1f1e-4b8e-9d6e-0a1b2c3d4e5f" }
   }
 
+  assert {
+    condition     = module.identity[0].rotation_ids == { finops = "8e3c3a6a-1f1e-4b8e-9d6e-0a1b2c3d4e5f", observability = "initial" }
+    error_message = "A rotation id replaces that identity's key only."
+  }
+}
+
+###############################################################################
+# Organisation policy: key creation forbidden, exception, unreadable, no organisation
+###############################################################################
+
+run "key_creation_forbidden_stops_the_plan" {
+  command = plan
+
   override_data {
-    target = data.http.certificate["finops"]
+    target = module.key_policy.data.http.effective_policy["iam.managed.disableServiceAccountKeyCreation"]
     values = {
-      status_code   = 404
-      response_body = "{\"detail\":\"not found\"}"
+      status_code   = 200
+      response_body = "{\"spec\":{\"rules\":[{\"enforce\":true}]}}"
     }
   }
 
-  expect_failures = [data.http.certificate["finops"]]
+  expect_failures = [terraform_data.key_creation_gate]
+}
+
+run "legacy_constraint_also_stops_the_plan" {
+  command = plan
+
+  override_data {
+    target = module.key_policy.data.http.effective_policy["iam.disableServiceAccountKeyCreation"]
+    values = {
+      status_code   = 200
+      response_body = "{\"spec\":{\"inheritFromParent\":true,\"rules\":[{\"enforce\":true}]}}"
+    }
+  }
+
+  expect_failures = [terraform_data.key_creation_gate]
+}
+
+run "exception_lifts_both_constraints_for_this_project" {
+  command = apply
+
+  variables {
+    allow_key_creation_exception = true
+  }
+
+  override_data {
+    target = module.key_policy.data.http.effective_policy["iam.managed.disableServiceAccountKeyCreation"]
+    values = {
+      status_code   = 200
+      response_body = "{\"spec\":{\"rules\":[{\"enforce\":true}]}}"
+    }
+  }
+
+  assert {
+    condition     = module.key_policy.exception_created && module.key_policy.ready.exception == ["projects/acme-billing/policies/iam.disableServiceAccountKeyCreation", "projects/acme-billing/policies/iam.managed.disableServiceAccountKeyCreation"] && length(module.key_policy.ready.waited) == 1
+    error_message = "With the exception requested, both constraints are lifted on this project, then the keys wait for propagation."
+  }
+
+  assert {
+    condition     = strcontains(output.symbol_connection_summary, "Key-creation policy exception: projects/acme-billing")
+    error_message = "The summary says an exception was created."
+  }
+}
+
+run "unreadable_policy_only_warns" {
+  command = plan
+
+  override_data {
+    target = module.key_policy.data.http.effective_policy["iam.managed.disableServiceAccountKeyCreation"]
+    values = {
+      status_code   = 403
+      response_body = "{\"error\":{\"code\":403,\"status\":\"PERMISSION_DENIED\"}}"
+    }
+  }
+
+  assert {
+    condition     = module.key_policy.unreadable == tolist(["iam.managed.disableServiceAccountKeyCreation"]) && length(module.key_policy.enforced) == 0
+    error_message = "A policy that cannot be read is reported, not treated as enforced."
+  }
+
+  expect_failures = [check.key_creation_policy_readable]
+}
+
+run "no_organisation_reads_no_policy" {
+  command = plan
+
+  variables {
+    organization_id              = ""
+    allow_key_creation_exception = true
+  }
+
+  assert {
+    condition     = module.key_policy.policy_state == {} && module.key_policy.exception_created == false
+    error_message = "A project without organisation has no organisation policy: nothing is read or created."
+  }
+}
+
+run "destroy_mode_reads_no_policy" {
+  command = plan
+
+  variables {
+    destroy_mode = true
+  }
+
+  override_data {
+    target = module.key_policy.data.http.effective_policy["iam.managed.disableServiceAccountKeyCreation"]
+    values = {
+      status_code   = 200
+      response_body = "{\"spec\":{\"rules\":[{\"enforce\":true}]}}"
+    }
+  }
+
+  assert {
+    condition     = module.key_policy.policy_state == {}
+    error_message = "destroy_mode must not read (or depend on) the organisation policies: revoking always works."
+  }
 }
 
 ###############################################################################
@@ -518,30 +666,6 @@ run "no_module_fails" {
     enable_monitoring = false
     enable_security   = false
     create_focus_view = false
-  }
-  expect_failures = [terraform_data.preflight]
-}
-
-run "principal_mode_without_principal_fails" {
-  command = plan
-  variables {
-    observability_principal = ""
-  }
-  expect_failures = [terraform_data.preflight]
-}
-
-run "same_principal_twice_fails" {
-  command = plan
-  variables {
-    observability_principal = "sym-2-fin@symbol-prod.iam.gserviceaccount.com"
-  }
-  expect_failures = [terraform_data.preflight]
-}
-
-run "key_upload_without_certificate_url_fails" {
-  command = plan
-  variables {
-    identity_mode = "key_upload"
   }
   expect_failures = [terraform_data.preflight]
 }
@@ -625,28 +749,20 @@ run "bad_project" {
   expect_failures = [var.project_id]
 }
 
-run "bad_identity_mode" {
+run "bad_rotation_identity" {
   command = plan
   variables {
-    identity_mode = "json_key"
+    key_rotation_ids = { signin = "x" }
   }
-  expect_failures = [var.identity_mode]
+  expect_failures = [var.key_rotation_ids]
 }
 
-run "bad_principal" {
+run "bad_rotation_value" {
   command = plan
   variables {
-    finops_principal = "someone@gmail.com"
+    key_rotation_ids = { finops = "a b" }
   }
-  expect_failures = [var.finops_principal]
-}
-
-run "http_certificate_url_rejected" {
-  command = plan
-  variables {
-    finops_certificate_url = "http://platform.example.com/keys/finops.crt"
-  }
-  expect_failures = [var.finops_certificate_url]
+  expect_failures = [var.key_rotation_ids]
 }
 
 run "bad_billing_account" {

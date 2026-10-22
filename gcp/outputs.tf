@@ -1,10 +1,15 @@
-# Contract v2 §5.7. The connection code carries identifiers only, never a secret.
+# Contract v2 §5.7, code version 2 (gcp-v2): the connection code carries the identifiers
+# Symbol registers AND the key file of each service account. It is SECRET: the output is
+# sensitive, symbol-setup.sh prints it once, and Symbol moves the keys to its Vault and
+# keeps only the identifiers.
 # Disabled modules (and identities a module set does not need) are null.
 # jsonencode() produces compact JSON with sorted keys.
 
 locals {
+  keys = try(module.identity[0].keys, {})
+
   connection = {
-    v               = 1
+    v               = 2
     org             = var.symbol_org_id
     session         = var.setup_session_id
     template        = var.template_version
@@ -15,24 +20,12 @@ locals {
       type = var.scope_type
       id   = local.scope_id
     }
-    identity_mode = var.identity_mode
-    modules       = local.enabled_modules
+    modules = local.enabled_modules
 
-    principals = local.key_upload ? null : {
-      finops        = local.needs_finops_identity ? var.finops_principal : null
-      observability = local.needs_observability_identity ? var.observability_principal : null
+    key = {
+      finops        = local.needs_finops_identity ? local.keys["finops"] : null
+      observability = local.needs_observability_identity ? local.keys["observability"] : null
     }
-
-    key = local.key_upload ? {
-      finops = local.needs_finops_identity ? {
-        service_account = module.identity[0].finops_email
-        key_id          = module.identity[0].finops_key_id
-      } : null
-      observability = local.needs_observability_identity ? {
-        service_account = module.identity[0].observability_email
-        key_id          = module.identity[0].observability_key_id
-      } : null
-    } : null
 
     finops = var.enable_finops ? {
       project_id              = var.project_id
@@ -54,32 +47,36 @@ locals {
 
   # Unpadded base64url (RFC 4648 §5): '+' -> '-', '/' -> '_', drop the '=' padding.
   connection_b64url = replace(replace(replace(base64encode(jsonencode(local.connection)), "+", "-"), "/", "_"), "/=+$/", "")
-  connection_code   = "SYMBOL-GCP-1.${local.connection_b64url}"
+  connection_code   = "SYMBOL-GCP-2.${local.connection_b64url}"
 }
 
 output "symbol_connection_code" {
-  description = "Paste this code into Symbol (Administration > Cloud configuration > GCP). It contains identifiers only, no secret."
+  description = "SECRET. Paste this code into Symbol (Administration > Cloud configuration > GCP) and nowhere else: it contains the keys of symbol-finops / symbol-observability. Print it with: terraform output -raw symbol_connection_code"
   value       = local.connection_code
+  sensitive   = true
 
   precondition {
-    condition     = length(local.connection_code) <= 8192
-    error_message = "The connection code exceeds 8192 characters (contract §4.5 decoder limit)."
+    # Two key files make the code about 8 KB; Symbol's decoder accepts up to 16384.
+    condition     = nonsensitive(length(local.connection_code)) <= 16384
+    error_message = "The connection code exceeds 16384 characters (Symbol's decoder limit for GCP codes)."
   }
 }
 
 output "symbol_connection_summary" {
-  description = "Human-readable summary of what this template configured."
+  description = "Human-readable summary of what this template configured (no secret)."
   value       = <<-EOT
     Symbol Cloud Connect ${var.template_version}
     Project ${var.project_id} (number ${data.google_project.this.number})${var.organization_id == "" ? ", no organisation" : ", organisation ${var.organization_id}"}
     Scope: ${var.scope_type} ${local.scope_id}
     Modules: ${join(", ", local.enabled_modules)}
-    Identity mode: ${var.identity_mode}
     %{~if local.needs_finops_identity}
-    FinOps identity: ${coalesce(local.finops_email, "n/a")}${local.key_upload ? " (key ${module.identity[0].finops_key_id})" : ""}
+    FinOps identity: ${coalesce(local.finops_email, "n/a")} (key ${coalesce(module.identity[0].finops_key_id, "n/a")})
     %{~endif}
     %{~if local.needs_observability_identity}
-    Observability identity: ${coalesce(local.observability_email, "n/a")}${local.key_upload ? " (key ${module.identity[0].observability_key_id})" : ""}
+    Observability identity: ${coalesce(local.observability_email, "n/a")} (key ${coalesce(module.identity[0].observability_key_id, "n/a")})
+    %{~endif}
+    %{~if module.key_policy.exception_created}
+    Key-creation policy exception: projects/${var.project_id} (removed by --destroy)
     %{~endif}
     %{~if var.enable_finops}
     FinOps: dataset ${var.project_id}.${module.finops[0].dataset_id}, table ${module.finops[0].table_id}${module.finops[0].focus_view_created ? " (FOCUS view managed by this template)" : ""}, billing account ${var.billing_account_id == "" ? "unknown" : var.billing_account_id}.
@@ -93,6 +90,7 @@ output "symbol_connection_summary" {
     %{~if var.enable_security}
     Security: roles/viewer, roles/iam.securityReviewer, roles/cloudasset.viewer at ${var.scope_type} ${local.scope_id}.
     %{~endif}
+    To rotate a key: run the Symbol rotation command (symbol-setup.sh --rotate finops|observability).
     To revoke everything: symbol-setup.sh --destroy --org ${var.symbol_org_id} --project ${var.project_id}
   EOT
 }

@@ -3,7 +3,7 @@
 # part of the contract (the script and Symbol's manual guide use them): do not rename.
 #
 # Terraform 1.5 cannot validate one variable against another. Cross-variable rules
-# ("key_upload needs the certificate URLs", "folder scope needs a folder number", ...)
+# ("folder scope needs a folder number", "SCC needs the organisation scope", ...)
 # are preconditions on terraform_data.preflight in main.tf and fail at plan time.
 
 ###############################################################################
@@ -32,7 +32,7 @@ variable "setup_session_id" {
 
 variable "template_version" {
   type        = string
-  default     = "gcp-v1.0.0"
+  default     = "gcp-v2.0.0"
   description = "Version of this template. Must equal the git tag Symbol pinned in the launch command."
 
   validation {
@@ -59,58 +59,23 @@ variable "enable_security" {
   description = "Security module: read-only roles for Symbol's security scanner at the chosen scope."
 }
 
-variable "identity_mode" {
-  type        = string
-  default     = "symbol_principal"
-  description = "symbol_principal: grant roles to Symbol's per-org service accounts (no key anywhere). key_upload: create symbol-finops / symbol-observability service accounts in this project and upload Symbol's public certificates as their keys."
-
-  validation {
-    condition     = contains(["symbol_principal", "key_upload"], var.identity_mode)
-    error_message = "identity_mode must be symbol_principal or key_upload."
-  }
+variable "allow_key_creation_exception" {
+  type        = bool
+  default     = false
+  description = "Set by symbol-setup.sh --allow-key-creation-exception. When the organisation forbids service-account key creation (iam.disableServiceAccountKeyCreation / iam.managed.disableServiceAccountKeyCreation), create a policy exception on THIS project only (needs roles/orgpolicy.policyAdmin on the organisation). Destroy removes the exception."
 }
 
-variable "finops_principal" {
-  type        = string
-  default     = ""
-  description = "symbol_principal mode: email of Symbol's per-org FinOps service account (sym-<org>-fin@<symbol project>.iam.gserviceaccount.com)."
+variable "key_rotation_ids" {
+  type        = map(string)
+  default     = {}
+  description = "Per identity (finops, observability): changing a value replaces that identity's key (symbol-setup.sh --rotate <identity>). A missing identity uses \"initial\". symbol-setup.sh keeps the values of the previous run, so a re-run never rotates a key by accident."
 
   validation {
-    condition     = var.finops_principal == "" || can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\\.iam\\.gserviceaccount\\.com$", var.finops_principal))
-    error_message = "finops_principal must be empty or a service account email (<id>@<project>.iam.gserviceaccount.com)."
-  }
-}
-
-variable "observability_principal" {
-  type        = string
-  default     = ""
-  description = "symbol_principal mode: email of Symbol's per-org observability service account (sym-<org>-obs@...)."
-
-  validation {
-    condition     = var.observability_principal == "" || can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\\.iam\\.gserviceaccount\\.com$", var.observability_principal))
-    error_message = "observability_principal must be empty or a service account email (<id>@<project>.iam.gserviceaccount.com)."
-  }
-}
-
-variable "finops_certificate_url" {
-  type        = string
-  default     = ""
-  description = "key_upload mode: public URL of the X.509 certificate (PEM) Symbol generated for symbol-finops in this session."
-
-  validation {
-    condition     = var.finops_certificate_url == "" || can(regex("^https://[^\\s\"'<>]+$", var.finops_certificate_url))
-    error_message = "finops_certificate_url must be empty or an https URL."
-  }
-}
-
-variable "observability_certificate_url" {
-  type        = string
-  default     = ""
-  description = "key_upload mode: public URL of the X.509 certificate (PEM) Symbol generated for symbol-observability in this session."
-
-  validation {
-    condition     = var.observability_certificate_url == "" || can(regex("^https://[^\\s\"'<>]+$", var.observability_certificate_url))
-    error_message = "observability_certificate_url must be empty or an https URL."
+    condition = alltrue([
+      for k, v in var.key_rotation_ids :
+      contains(["finops", "observability"], k) && can(regex("^[A-Za-z0-9-]{1,64}$", v))
+    ])
+    error_message = "key_rotation_ids keys must be finops or observability, values 1-64 characters: letters, digits or '-'."
   }
 }
 
@@ -118,7 +83,7 @@ variable "observability_certificate_url" {
 variable "symbol_egress_cidrs" {
   type        = list(string)
   default     = []
-  description = "Symbol's egress CIDRs. UNUSED in gcp-v1: GCP IAM has no per-principal source-IP condition outside VPC Service Controls access levels, which this template does not create. Accepted so the launch command is uniform across providers."
+  description = "Symbol's egress CIDRs. UNUSED in gcp-v2: GCP IAM has no per-principal source-IP condition outside VPC Service Controls access levels, which this template does not create. Accepted so the launch command is uniform across providers."
 
   validation {
     condition = alltrue([
@@ -135,7 +100,7 @@ variable "symbol_egress_cidrs" {
 
 variable "project_id" {
   type        = string
-  description = "Project that hosts the billing dataset, the Pub/Sub resources and (key_upload) the service accounts. BigQuery jobs and API quota are billed to it."
+  description = "Project that hosts the billing dataset, the Pub/Sub resources and Symbol's two service accounts with their keys. BigQuery jobs and API quota are billed to it."
 
   validation {
     condition     = can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.project_id))
@@ -236,5 +201,5 @@ variable "enable_scc" {
 variable "destroy_mode" {
   type        = bool
   default     = false
-  description = "Set by symbol-setup.sh --destroy: skips the certificate downloads and the setup checks so revocation works after the setup session has expired."
+  description = "Set by symbol-setup.sh --destroy: skips the organisation-policy reads and the setup checks so revocation always works."
 }

@@ -256,6 +256,23 @@ def test_the_namespace_is_standard_so_a_consumer_group_can_exist():
     assert 'sku      = "Standard"' in monitoring
 
 
+def test_the_hub_is_replaced_with_its_namespace():
+    """A replaced namespace comes back empty, and the hub has to go with it.
+
+    Changing the region replaces the namespace, but the provider plans the hub as an
+    in-place update -- namespace_id is only "known after apply" -- and that update dies
+    on `partition_count cannot be decreased`, leaving Terraform believing in a hub that
+    no longer exists inside a namespace rebuilt without it.
+    """
+    monitoring = _read("modules", "monitoring", "main.tf")
+    hub = monitoring.split('resource "azurerm_eventhub" "activity"', 1)[1]
+    hub = hub.split("\nresource ", 1)[0]
+    assert "replace_triggered_by" in hub
+    assert "azurerm_eventhub_namespace.symbol[0]" in hub
+    # And the consumer group must be ordered after the hub, or it lands on nothing.
+    assert "depends_on = [azurerm_eventhub.activity]" in monitoring
+
+
 def test_only_the_categories_the_parser_understands_are_streamed():
     monitoring = _read("modules", "monitoring", "main.tf")
     categories = set(re.findall(r'category = "([^"]+)"', monitoring))

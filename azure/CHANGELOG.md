@@ -3,6 +3,27 @@
 All notable changes to the Azure template. Versions are `azure-vMAJOR.MINOR.PATCH` and a
 release is immutable: a published tag is never moved, and the registry pins its commit.
 
+## [azure-v1.0.4] — 2026-11-10
+
+### Fixed
+
+- **The Event Hub did not follow its namespace.** Changing the region replaces the
+  namespace, and a replaced namespace comes back empty — but the provider plans the hub
+  as an in-place UPDATE, because `namespace_id` is only "known after apply" and nothing
+  marks it as forcing replacement. The update then failed with `partition_count cannot
+  be decreased`, and even where it would not have failed, Terraform was left believing
+  in a hub that no longer existed. The hub's life is tied to the namespace's now.
+
+### Confirmed working in a real subscription
+
+- The **FOCUS 1.0 export** created in 11 seconds
+  (`Microsoft.CostManagement/exports@2025-03-01`, `type: FocusCost`,
+  `dataVersion: 1.0`) — the shape was right. The `401 RBACAccessDenied` of the first
+  run was first-time registration of `Microsoft.CostManagement` not yet propagated,
+  which the preflight added in v1.0.2 now also covers as a readiness probe.
+- The **blob role assignment** completed in 35 seconds at account scope, where container
+  scope had timed out after thirty minutes.
+
 ## [azure-v1.0.3] — 2026-11-10
 
 ### Fixed

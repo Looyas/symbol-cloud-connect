@@ -67,6 +67,21 @@ resource "azurerm_eventhub" "activity" {
 
   partition_count   = var.partition_count
   message_retention = var.retention_days
+
+  lifecycle {
+    # A NAMESPACE COMES BACK EMPTY WHEN IT IS REPLACED, AND THIS HUB MUST GO WITH IT.
+    #
+    # Changing the region replaces the namespace. The provider still plans this hub as
+    # an in-place UPDATE -- namespace_id is only "known after apply", so nothing marks
+    # it as forcing replacement -- and that update then fails on any property Azure
+    # refuses to shrink: `partition_count cannot be decreased`. Even when it does not
+    # fail, Terraform is left believing in a hub that no longer exists, inside a
+    # namespace that was rebuilt without it.
+    #
+    # Tying the hub's life to the namespace's is the whole fix: replaced together,
+    # recreated together, with the partition count this template asks for.
+    replace_triggered_by = [azurerm_eventhub_namespace.symbol[0]]
+  }
 }
 
 resource "azurerm_eventhub_consumer_group" "symbol" {

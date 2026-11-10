@@ -90,6 +90,18 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "$1 is required and was not found. Run this from Azure Cloud Shell, where it is installed."
 }
 
+# One Terraform output, or nothing. The `cd` is inside the subshell so the script's own
+# directory never moves, and the caller adds its own fallback with a plain `||` -- which
+# is why this exists rather than `cd X && tf ... || true` at each call site (SC2015: that
+# reads as if-then-else and is not one).
+tf_output() { # output-name
+  (cd "${TF_DIR}" && "${TF}" output -raw "$1") 2>/dev/null
+}
+
+tf_output_json() { # output-name
+  (cd "${TF_DIR}" && "${TF}" output -json "$1") 2>/dev/null
+}
+
 confirm() { # prompt -> 0 when the user typed y/yes
   [[ "${ASSUME_YES}" == "true" ]] && return 0
   local reply=""
@@ -345,7 +357,7 @@ ensure_state() {
 # rotation replaces one.
 resolve_rotation_ids() {
   local previous="{}"
-  previous="$(cd "${TF_DIR}" && "${TF}" output -json secret_rotation_ids 2>/dev/null || printf '{}')"
+  previous="$(tf_output_json secret_rotation_ids || printf '{}')"
   ROTATE="${ROTATE}" SESSION="${SESSION}" python3 -c '
 import json, os, sys
 try:
@@ -492,8 +504,8 @@ destroy() {
 
 print_code() {
   local code summary
-  summary="$(cd "${TF_DIR}" && "${TF}" output -raw symbol_connection_summary 2>/dev/null || true)"
-  code="$(cd "${TF_DIR}" && "${TF}" output -raw symbol_connection_code 2>/dev/null || true)"
+  summary="$(tf_output symbol_connection_summary || true)"
+  code="$(tf_output symbol_connection_code || true)"
   [[ -n "${code}" ]] || die "The connection code could not be read from the Terraform output."
 
   printf '\n%s\n' "${summary}" >&2

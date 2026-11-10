@@ -146,6 +146,13 @@ validate_args() {
     "--org must be 1-44 characters of letters, digits, '_' and '-'."
 
   if [[ "${DESTROY}" == "true" ]]; then
+    # A destroy carries no session and no release -- it removes whatever is in state.
+    # But variables.tf validates both, and `destroy_mode` only bypasses the lifecycle
+    # PRECONDITIONS, not variable validation: left empty, terraform refuses the var file
+    # with "setup_session_id must be a UUID" and the revoke cannot run at all.
+    SESSION="${SESSION:-00000000-0000-0000-0000-000000000000}"
+    TEMPLATE="${TEMPLATE:-azure-v1.0.0}"
+    MODULES="${MODULES:-finops,monitoring,security}"
     return 0
   fi
 
@@ -569,7 +576,6 @@ main() {
 
   if [[ "${DESTROY}" == "true" ]]; then
     ensure_state "false"
-    MODULES="${MODULES:-finops,monitoring,security}"
     write_var_file
     destroy
     exit 0

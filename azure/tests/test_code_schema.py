@@ -229,6 +229,27 @@ def test_the_names_are_the_ones_the_adapter_expects():
         assert re.search(r"^\s+%s\s*=\s*\"%s\"$" % (key, value), main, re.MULTILINE), key
 
 
+def test_destroy_supplies_the_variables_terraform_validates():
+    """`--destroy` carries no session and no release, and both are validated.
+
+    `destroy_mode` bypasses the lifecycle PRECONDITIONS only; a variable validation
+    still runs, so an empty setup_session_id made terraform refuse the var file and the
+    revoke could not run at all. Pinned because the destroy path has no happy-path test
+    anywhere else -- it is only ever exercised when something has already gone wrong.
+    """
+    script = (AZURE_DIR / "symbol-setup.sh").read_text(encoding="utf-8")
+    # Split on the closing `fi` at its own indentation: a bare "fi" also matches
+    # inside "var file", which truncates the block and makes this test lie.
+    opened = script.split('if [[ "${DESTROY}" == "true" ]]; then', 1)[1]
+    destroy = opened.split("\n  fi", 1)[0]
+    assert 'SESSION="${SESSION:-' in destroy
+    assert 'TEMPLATE="${TEMPLATE:-' in destroy
+    assert 'MODULES="${MODULES:-' in destroy
+    # And they must satisfy variables.tf, or the var file is refused.
+    assert re.search(r'SESSION:-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', destroy)
+    assert re.search(r"TEMPLATE:-azure-v\d+\.\d+\.\d+", destroy)
+
+
 def test_the_namespace_is_standard_so_a_consumer_group_can_exist():
     """Basic allows exactly one consumer group ($Default) -- the one arrangement refused."""
     monitoring = _read("modules", "monitoring", "main.tf")

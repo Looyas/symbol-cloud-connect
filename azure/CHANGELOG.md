@@ -3,9 +3,23 @@
 All notable changes to the Azure template. Versions are `azure-vMAJOR.MINOR.PATCH` and a
 release is immutable: a published tag is never moved, and the registry pins its commit.
 
+## [azure-v1.0.3] — 2026-11-10
+
+### Fixed
+
+- **`--destroy` could never have run**, in any released version. It carries no session
+  and no release, and `variables.tf` validates both; `destroy_mode` bypasses the
+  lifecycle preconditions only, so terraform refused the var file with
+  "setup_session_id must be a UUID" before doing anything. Destroy now supplies values
+  that satisfy the validation — they are not read, because a destroy removes whatever is
+  in state.
+
+  Found by a question, not a test: the revoke path only runs when something has already
+  gone wrong, so nothing exercised it. `tests/test_code_schema.py` pins it now.
+
 ## [azure-v1.0.2] — 2026-11-10
 
-Both of these came out of a real apply, not a review.
+Both came out of a real apply, not a review.
 
 ### Fixed
 

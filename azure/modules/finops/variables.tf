@@ -1,13 +1,3 @@
-variable "symbol_org_id" {
-  description = "The Symbol organisation."
-  type        = string
-}
-
-variable "subscription_id" {
-  description = "The subscription the export covers."
-  type        = string
-}
-
 variable "subscription_scope" {
   description = "The subscription's resource id (/subscriptions/<guid>)."
   type        = string

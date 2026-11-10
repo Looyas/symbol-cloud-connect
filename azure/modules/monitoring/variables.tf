@@ -1,8 +1,3 @@
-variable "subscription_id" {
-  description = "The subscription whose Activity Log is streamed."
-  type        = string
-}
-
 variable "subscription_scope" {
   description = "The subscription's resource id (/subscriptions/<guid>) -- the diagnostic setting's target."
   type        = string

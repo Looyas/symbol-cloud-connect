@@ -281,7 +281,7 @@ state_account_name() {
   # Deterministic: a re-run after a lost local checkout finds the SAME account instead
   # of creating a second one beside it. 24 characters, lower-case alphanumerics.
   local hash
-  hash="$(printf '%s-%s' "$(printf '%s' "${SUBSCRIPTION}" | tr 'A-Z' 'a-z')" "$(printf '%s' "${ORG}" | tr 'A-Z' 'a-z')" \
+  hash="$(printf '%s-%s' "$(printf '%s' "${SUBSCRIPTION}" | tr '[:upper:]' '[:lower:]')" "$(printf '%s' "${ORG}" | tr '[:upper:]' '[:lower:]')" \
     | python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.read().strip().encode()).hexdigest())')"
   printf 'symboltf%s' "${hash:0:16}"
 }

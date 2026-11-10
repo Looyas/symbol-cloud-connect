@@ -24,8 +24,8 @@ locals {
   needs_finops_identity        = var.enable_finops
   needs_observability_identity = var.enable_monitoring || var.enable_security
 
-  creates_export   = var.enable_finops && var.create_cost_export
-  creates_eventhub = var.enable_monitoring && var.create_eventhub
+  creates_export       = var.enable_finops && var.create_cost_export
+  creates_eventhub     = var.enable_monitoring && var.create_eventhub
   needs_resource_group = local.creates_export || local.creates_eventhub
 
   # A storage account name is 3-24 lower-case alphanumerics and globally unique, and an
@@ -36,17 +36,17 @@ locals {
 
   resource_group_name = var.resource_group_name != "" ? var.resource_group_name : "symbol-cloud-connect"
 
-  storage_account_name   = "symbol${substr(local.name_hash, 0, 18)}"
+  storage_account_name    = "symbol${substr(local.name_hash, 0, 18)}"
   eventhub_namespace_name = "symbol-${substr(local.name_hash, 0, 16)}"
 
   # The names the MANUAL guide also uses, so a manual and an automatic setup leave the
   # subscription in the same shape and the same preflight reads both the same way.
-  export_container  = "symbol-focus"
-  export_directory  = "symbol-focus"
-  export_name       = "symbol-focus-${var.symbol_org_id}"
-  eventhub_name     = "symbol-activity"
-  consumer_group    = "symbol-monitoring"
-  diagnostic_name   = "symbol-activity-log"
+  export_container = "symbol-focus"
+  export_directory = "symbol-focus"
+  export_name      = "symbol-focus-${var.symbol_org_id}"
+  eventhub_name    = "symbol-activity"
+  consumer_group   = "symbol-monitoring"
+  diagnostic_name  = "symbol-activity-log"
 
   # What the connection code reports, whichever side created it.
   export_storage_account = local.creates_export ? local.storage_account_name : var.existing_export_storage_account
@@ -160,11 +160,9 @@ module "finops" {
   source = "./modules/finops"
   count  = var.enable_finops ? 1 : 0
 
-  symbol_org_id       = var.symbol_org_id
-  subscription_id     = var.subscription_id
-  subscription_scope  = data.azurerm_subscription.this.id
-  location            = var.location
-  tags                = local.tags
+  subscription_scope = data.azurerm_subscription.this.id
+  location           = var.location
+  tags               = local.tags
 
   create_export        = var.create_cost_export
   resource_group_name  = local.creates_export ? azurerm_resource_group.symbol[0].name : var.existing_export_resource_group
@@ -184,7 +182,6 @@ module "monitoring" {
   source = "./modules/monitoring"
   count  = var.enable_monitoring ? 1 : 0
 
-  subscription_id    = var.subscription_id
   subscription_scope = data.azurerm_subscription.this.id
   location           = var.location
   tags               = local.tags

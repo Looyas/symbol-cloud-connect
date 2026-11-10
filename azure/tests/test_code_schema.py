@@ -210,13 +210,14 @@ def test_the_admin_owns_both_applications():
 
 
 def test_the_names_are_the_ones_the_adapter_expects():
+    """Whitespace-insensitive: `terraform fmt` owns the alignment, not this test."""
     main = _read("main.tf")
-    for name in ('export_container  = "symbol-focus"',
-                 'export_directory  = "symbol-focus"',
-                 'eventhub_name     = "symbol-activity"',
-                 'consumer_group    = "symbol-monitoring"',
-                 'diagnostic_name   = "symbol-activity-log"'):
-        assert name in main, name
+    for key, value in (("export_container", "symbol-focus"),
+                       ("export_directory", "symbol-focus"),
+                       ("eventhub_name", "symbol-activity"),
+                       ("consumer_group", "symbol-monitoring"),
+                       ("diagnostic_name", "symbol-activity-log")):
+        assert re.search(r"^\s+%s\s*=\s*\"%s\"$" % (key, value), main, re.MULTILINE), key
 
 
 def test_the_namespace_is_standard_so_a_consumer_group_can_exist():

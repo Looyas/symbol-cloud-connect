@@ -40,14 +40,6 @@ terraform {
       source  = "Azure/azapi"
       version = "2.7.0"
     }
-    time = {
-      source  = "hashicorp/time"
-      version = "0.13.1"
-    }
-    random = {
-      source  = "hashicorp/random"
-      version = "3.7.2"
-    }
   }
 
   # Partial configuration: symbol-setup.sh passes

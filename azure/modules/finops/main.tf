@@ -37,6 +37,26 @@ data "azurerm_storage_account" "existing" {
 }
 
 resource "azurerm_storage_account" "export" {
+  # Symbol reads this export from OUTSIDE the customer's network -- that is what a SaaS
+  # cost reader is. Both of these would make it unreadable, so neither is a finding that
+  # can be fixed; the export is protected by RBAC on the container instead, scoped to one
+  # application, read-only, with the account keys disabled entirely.
+  #checkov:skip=CKV_AZURE_59:Symbol reads the export from outside the subscription; public_network_access_enabled = false would make it unreadable. Access is RBAC-only (Storage Blob Data Reader on the container), shared_access_key_enabled = false.
+  #checkov:skip=CKV2_AZURE_33:A private endpoint would put the export on the customer's VNet only, where Symbol cannot reach it. Same reason as CKV_AZURE_59.
+  #
+  # LRS is deliberate, not an oversight: Azure REGENERATES this export daily, so the
+  # blobs are derived data with a 24-hour natural recovery. Geo-replicating them would
+  # charge the customer twice for a file Azure rebuilds for free.
+  #checkov:skip=CKV_AZURE_206:LRS by design -- the FOCUS export is regenerated daily by Azure Cost Management, so geo-replication would bill the customer for redundancy of derived data.
+  #
+  # Encryption at rest is on by default with Microsoft-managed keys. A customer-managed
+  # key needs a Key Vault, a key, an access policy and a rotation story that this
+  # template does not own -- and an export the customer can already read in the portal
+  # is not the place to impose one. A customer who wants CMK can add it afterwards.
+  #checkov:skip=CKV2_AZURE_1:Encrypted at rest with Microsoft-managed keys (default). CMK needs a customer-owned Key Vault this template does not create.
+  #
+  # No queue is ever created in this account: it holds the cost export and nothing else.
+  #checkov:skip=CKV_AZURE_33:This account serves blobs only; the queue service is never used, so queue logging would configure a service that does not run.
   count = var.create_export ? 1 : 0
 
   name                = var.storage_account_name
@@ -68,6 +88,11 @@ resource "azurerm_storage_account" "export" {
 }
 
 resource "azurerm_storage_container" "export" {
+  # Blob read logging needs a destination -- a Log Analytics workspace or a second
+  # storage account -- that this template does not create, and would bill the customer
+  # for logs of the one read Symbol makes a day. The reads that matter are already in
+  # the subscription's Activity Log, which the Monitoring module streams to Symbol.
+  #checkov:skip=CKV2_AZURE_21:Blob read logging needs a destination this template does not create, to log one read a day. Control-plane access is already in the Activity Log.
   count = var.create_export ? 1 : 0
 
   name                  = var.container_name

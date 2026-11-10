@@ -3,6 +3,29 @@
 All notable changes to the Azure template. Versions are `azure-vMAJOR.MINOR.PATCH` and a
 release is immutable: a published tag is never moved, and the registry pins its commit.
 
+## [azure-v1.0.2] — 2026-11-10
+
+Both of these came out of a real apply, not a review.
+
+### Fixed
+
+- **The blob role assignment never completed.** Scoped to the container, the provider
+  created it and then polled for it to "finish replicating" for **thirty minutes**
+  before timing out — while the subscription-scoped assignment beside it took 32
+  seconds. It is scoped to the storage **account** now. Where the setup creates the
+  account that costs nothing; with `--existing-export` it is wider, and
+  [PERMISSIONS.md](PERMISSIONS.md) says so.
+
+### Added
+
+- **A Cost Management preflight.** `Microsoft.CostManagement` refused the export with
+  `401 RBACAccessDenied` even though the admin was Owner: cost access is governed at the
+  **billing account**, not the subscription, and nothing in this template can grant it.
+  The script now checks before creating anything and names who can fix it — an EA
+  administrator turning on 'AO view charges', or Cost Management Contributor on an MCA
+  billing profile — and offers `--modules monitoring,security` as the way to proceed
+  without FinOps.
+
 ## [azure-v1.0.1] — 2026-11-10
 
 ### Fixed

@@ -61,7 +61,10 @@ only ever shown on the setup page, while signed in to Symbol — it is never ema
 
 - Two applications, not one, so a leak of the ingestion credential does not also carry
   subscription-wide read. See [PERMISSIONS.md](PERMISSIONS.md).
-- `Storage Blob Data Reader` is scoped to the **container**, not the storage account.
+- `Storage Blob Data Reader` is scoped to the storage **account** the setup creates,
+  which holds the export and nothing else. Container scope is tighter and the
+  provider cannot complete it (see PERMISSIONS.md); with `--existing-export` the
+  account is yours and may hold more, which is the one case to weigh.
 - `Azure Event Hubs Data Receiver` is scoped to the **hub**, and is receive-only.
 - Neither application holds a Microsoft Graph permission, so neither needs admin consent
   and neither can read the directory.

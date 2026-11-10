@@ -43,11 +43,16 @@ itself.
 
 | Role | Scope | Why |
 |---|---|---|
-| `Storage Blob Data Reader` | the export's **container** | Reads the FOCUS 1.0 export (cost ingestion) |
+| `Storage Blob Data Reader` | the export's **storage account** | Reads the FOCUS 1.0 export (cost ingestion) |
 | `Cost Management Reader` | the subscription | Cost queries and Advisor recommendations |
 
-The blob role is scoped to the container, not the storage account: the difference between
-"read this export" and "read every blob this subscription owns".
+The blob role is scoped to the storage **account**. Container scope would be tighter,
+and azure-v1.0.1 used it — but the Terraform provider creates a container-scoped
+assignment and then never confirms it, polling thirty minutes before timing out. When
+the setup creates the account this costs nothing: it holds the Symbol export and nothing
+else. With `--existing-export`, pointing at an account of your own, Symbol can read every
+container in it — so point it at an account whose other contents you are content to
+share, or let the setup make its own.
 
 ### `Symbol Observability`
 

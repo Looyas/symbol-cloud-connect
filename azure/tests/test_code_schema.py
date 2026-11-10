@@ -154,11 +154,20 @@ def test_no_role_is_assigned_at_management_group_scope():
     assert "management_group" not in terraform
 
 
-def test_the_blob_role_is_scoped_to_the_container():
-    """Not the storage account: 'read this export' versus 'read every blob'."""
+def test_the_blob_role_is_scoped_to_the_account_and_says_why():
+    """Container scope is better and the provider cannot finish it.
+
+    azure-v1.0.1 scoped this to the container; the provider created the assignment and
+    then polled thirty minutes for it to "finish replicating" before timing out, while
+    the subscription-scoped assignment beside it took 32 seconds. The reason has to stay
+    next to the code, or the next reader narrows the scope again and loses another half
+    hour finding out why.
+    """
     finops = _read("modules", "finops", "main.tf")
-    assert "blobServices/default/containers/" in finops
-    assert "scope                = local.container_scope" in finops
+    assert re.search(r"scope\s*=\s*local\.storage_account_id", finops)
+    assert "THIRTY" in finops or "thirty minutes" in finops
+    # The wider scope is only harmless when we made the account; say so where it is read.
+    assert "create_export = false" in finops
 
 
 def test_the_event_hub_role_is_scoped_to_the_hub():

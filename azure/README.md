@@ -38,7 +38,7 @@ touched.
 | Module | Created | Role granted |
 |---|---|---|
 | `signin` | **nothing** — Symbol needs the directory id, which it already has | — |
-| `finops` | storage account, container, FOCUS 1.0 export | `Storage Blob Data Reader` on the **container**, `Cost Management Reader` on the subscription |
+| `finops` | storage account, container, FOCUS 1.0 export | `Storage Blob Data Reader` on the **storage account**, `Cost Management Reader` on the subscription |
 | `monitoring` | Event Hubs namespace (Standard), hub, consumer group `symbol-monitoring`, diagnostic setting `symbol-activity-log` | `Azure Event Hubs Data Receiver` on the **hub** |
 | `security` | nothing | `Reader`, `Security Reader`, `Monitoring Reader` on the subscription |
 
@@ -75,7 +75,7 @@ about GuardDuty and Security Hub. The CIS scan runs without it, on Resource Grap
 |---|---|---|
 | `--subscription <guid>` | the active one | Which subscription to connect |
 | `--location <region>` | `westeurope` | Where the resource group and its resources live |
-| `--existing-export <account>/<rg>/<container>/<dir>/<name>` | — | Read a FOCUS export you already run; nothing is created for FinOps |
+| `--existing-export <account>/<rg>/<container>/<dir>/<name>` | — | Read a FOCUS export you already run; nothing is created for FinOps. **Symbol is then granted `Storage Blob Data Reader` on that whole account**, not just the container — see [SECURITY.md](SECURITY.md) |
 | `--existing-eventhub <namespace>/<rg>/<hub>` | — | Use a namespace you already run; **only the consumer group is created** |
 | `--secret-months <1-24>` | `12` | How long each client secret is valid |
 | `--rotate finops\|observability` | — | Replace one secret; paste the new code straight away |

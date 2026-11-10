@@ -22,11 +22,7 @@
 ###############################################################################
 
 locals {
-  # The container is addressed by its full resource id: a role assignment scoped to
-  # the container, not the whole account, is the difference between "read this export"
-  # and "read every blob this subscription owns".
   storage_account_id = var.create_export ? azurerm_storage_account.export[0].id : data.azurerm_storage_account.existing[0].id
-  container_scope    = "${local.storage_account_id}/blobServices/default/containers/${var.container_name}"
 }
 
 data "azurerm_storage_account" "existing" {
@@ -188,9 +184,21 @@ resource "azapi_resource" "focus_export" {
 # What symbol-finops may do. Two roles, both read-only.
 ###############################################################################
 
-# The export's blobs -- scoped to the CONTAINER, not the storage account.
+# The export's blobs. Scoped to the storage ACCOUNT, and that is a retreat from
+# azure-v1.0.1, which scoped it to the container.
+#
+# A container-scoped assignment is created and then never confirmed: the provider polls
+# for it to "finish replicating" and, at that nested scope, the poll ran for THIRTY
+# MINUTES and timed out. The subscription-scoped assignment below completed in 32
+# seconds in the same apply, so this is the scope and not the permissions.
+#
+# What the wider scope costs: when this template creates the account, nothing -- it
+# holds the Symbol export and nothing else. When `create_export = false` and the
+# customer points at an account of their own, it IS wider: Symbol can then read every
+# container in that account, not just the export's. README.md says so where the option
+# is described, so the choice is made with that in front of the admin.
 resource "azurerm_role_assignment" "blob_reader" {
-  scope                = local.container_scope
+  scope                = local.storage_account_id
   role_definition_name = "Storage Blob Data Reader"
   principal_id         = var.principal_id
   principal_type       = "ServicePrincipal"

@@ -28,6 +28,8 @@ readonly TF_DIR="${SCRIPT_DIR}"
 readonly TERRAFORM_MIN="1.5.0"
 readonly STATE_RESOURCE_GROUP="symbol-cloud-connect-state"
 readonly STATE_CONTAINER="tfstate"
+#: Must match modules/finops/main.tf -- the preflight probes what the template writes.
+readonly COST_API_VERSION="2025-03-01"
 
 # Resource providers every module needs registered. Registering one already registered
 # changes nothing.
@@ -262,6 +264,41 @@ Symbol's automatic setup creates two applications in YOUR directory -- 'Symbol F
     note "Users cannot register applications in this directory, but your directory role allows it."
   fi
   info "Application registration is permitted for this account"
+}
+
+# ---------------------------------------------------------------------------
+# Step 3b: may this account read Cost Management?
+#
+# Owner on the SUBSCRIPTION is not enough, and that surprises people. Cost access is
+# governed at the BILLING account: an EA administrator can turn charge visibility off
+# for subscription owners, and on MCA the Cost Management roles live on the billing
+# profile. When it is off, creating the export fails with 401 RBACAccessDenied --
+# which azure-v1.0.1 discovered only AFTER creating twenty resources.
+#
+# A read is the proxy for a write here: where cost access is withheld, both go.
+# ---------------------------------------------------------------------------
+
+check_cost_management_access() {
+  needs_finops || return 0
+  if az rest --method GET \
+      --url "https://management.azure.com/subscriptions/${SUBSCRIPTION}/providers/Microsoft.CostManagement/exports?api-version=${COST_API_VERSION}" \
+      -o none 2>/dev/null; then
+    info "Cost Management is readable on this subscription"
+    return 0
+  fi
+
+  die "This account cannot read Cost Management on subscription ${SUBSCRIPTION}, so the
+FinOps export cannot be created. Owner on the subscription does not grant this: cost
+access is controlled at the BILLING account.
+
+Ask whoever administers your Azure billing to do ONE of these:
+  * Enterprise Agreement: turn on 'AO view charges' (and 'DA view charges') in the EA
+    portal, so subscription owners may see costs.
+  * Microsoft Customer Agreement: grant you 'Cost Management Contributor' on the
+    billing profile, or on this subscription.
+
+Or connect the other modules now and add FinOps later -- rerun the Symbol setup with
+--modules monitoring,security. Nothing has been created."
 }
 
 # ---------------------------------------------------------------------------
@@ -539,6 +576,7 @@ main() {
   fi
 
   check_app_registration_allowed
+  check_cost_management_access
   register_providers
   ensure_state "true"
   write_var_file

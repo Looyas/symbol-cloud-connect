@@ -1,0 +1,130 @@
+###############################################################################
+# Monitoring: the Activity Log, streamed to an Event Hub Symbol reads.
+#
+# TWO CREDENTIALS, GOING OPPOSITE WAYS
+# ------------------------------------
+# Azure Monitor WRITES into the hub with a SAS rule on the namespace
+# (`RootManageSharedAccessKey`, which every namespace is created with). Symbol READS
+# from it with an Entra token as symbol-observability, through the "Azure Event Hubs
+# Data Receiver" role below. They are unrelated: no key of the customer's reaches
+# Symbol, and Symbol's identity cannot write.
+#
+# THE CONSUMER GROUP IS ALWAYS OURS
+# ---------------------------------
+# `create_namespace = false` reuses a namespace the customer already pays for, but the
+# consumer group is created either way. Event Hubs gives each group its own cursor;
+# two readers sharing `$Default` compete for the same partitions, and Symbol's
+# checkpoint store (monitoring-service: EventHubOffsetStore) assumes it owns its
+# group's offsets outright.
+###############################################################################
+
+locals {
+  namespace_id = var.create_namespace ? azurerm_eventhub_namespace.symbol[0].id : data.azurerm_eventhub_namespace.existing[0].id
+
+  # The hub, addressed by id. For a namespace we did not create, the id is built from
+  # the namespace's rather than read back: a data source would be one more permission
+  # the admin needs for no extra certainty.
+  eventhub_id = var.create_namespace ? azurerm_eventhub.activity[0].id : "${local.namespace_id}/eventhubs/${var.eventhub_name}"
+
+  # Azure Monitor's own writer. Present on every namespace from creation.
+  send_rule_id = "${local.namespace_id}/authorizationRules/RootManageSharedAccessKey"
+}
+
+data "azurerm_eventhub_namespace" "existing" {
+  count = var.create_namespace ? 0 : 1
+
+  name                = var.namespace_name
+  resource_group_name = var.resource_group_name
+}
+
+resource "azurerm_eventhub_namespace" "symbol" {
+  count = var.create_namespace ? 1 : 0
+
+  name                = var.namespace_name
+  resource_group_name = var.resource_group_name
+  location            = var.location
+
+  # Standard, not Basic: Basic allows exactly one consumer group ($Default), which is
+  # the one arrangement this module refuses to use.
+  sku      = "Standard"
+  capacity = 1
+
+  public_network_access_enabled = true
+  minimum_tls_version           = "1.2"
+
+  # Symbol reads with an Entra token; local SAS keys stay for Azure Monitor's own
+  # writer, which has no other way in.
+  local_authentication_enabled = true
+
+  tags = var.tags
+}
+
+resource "azurerm_eventhub" "activity" {
+  count = var.create_namespace ? 1 : 0
+
+  name         = var.eventhub_name
+  namespace_id = azurerm_eventhub_namespace.symbol[0].id
+
+  partition_count   = var.partition_count
+  message_retention = var.retention_days
+}
+
+resource "azurerm_eventhub_consumer_group" "symbol" {
+  name                = var.consumer_group
+  namespace_name      = var.namespace_name
+  eventhub_name       = var.eventhub_name
+  resource_group_name = var.resource_group_name
+
+  user_metadata = "Symbol monitoring-service. Do not use for another reader."
+
+  depends_on = [azurerm_eventhub.activity]
+}
+
+###############################################################################
+# The Activity Log, routed into the hub.
+#
+# Named `symbol-activity-log` so it never collides with a diagnostic setting the
+# customer already has -- a subscription allows five, and overwriting one would
+# silently stop somebody else's pipeline.
+###############################################################################
+
+resource "azurerm_monitor_diagnostic_setting" "activity_log" {
+  name               = var.diagnostic_name
+  target_resource_id = var.subscription_scope
+
+  eventhub_name                  = var.eventhub_name
+  eventhub_authorization_rule_id = local.send_rule_id
+
+  # The three categories monitoring-service's parser understands (app/pipeline/parse.py):
+  # control-plane writes, Defender alerts and policy evaluations. Streaming categories
+  # nothing reads would cost the customer per ingested event for messages Symbol
+  # refuses.
+  enabled_log {
+    category = "Administrative"
+  }
+
+  enabled_log {
+    category = "Security"
+  }
+
+  enabled_log {
+    category = "Policy"
+  }
+
+  depends_on = [azurerm_eventhub_consumer_group.symbol]
+}
+
+###############################################################################
+# What symbol-observability may do with the hub. One role, receive-only.
+###############################################################################
+
+resource "azurerm_role_assignment" "eventhub_receiver" {
+  scope                = local.eventhub_id
+  role_definition_name = "Azure Event Hubs Data Receiver"
+  principal_id         = var.principal_id
+  principal_type       = "ServicePrincipal"
+
+  description = "Symbol monitoring reads the Activity Log events. Receive only."
+
+  depends_on = [azurerm_eventhub.activity]
+}

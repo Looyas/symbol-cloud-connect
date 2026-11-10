@@ -1,0 +1,111 @@
+name: azure-ci
+
+# Azure template (azure/): fmt, validate (Terraform 1.5 = the minimum symbol-setup.sh
+# accepts, and the version Azure Cloud Shell ships), the Python cross-checks of the
+# connection code and the roles, shellcheck, tflint and checkov. No cloud credentials
+# are used anywhere.
+#
+# There is no `terraform test` here, unlike gcp-ci. The azuread provider reaches
+# Microsoft Graph for every application and service principal, so a mocked run would
+# assert against mocks of the one thing worth testing. The structural properties are
+# pinned by tests/test_code_schema.py instead, which also decodes a sample connection
+# code with connections-service's own decoder when it is checked out.
+on:
+  pull_request:
+    paths: ["azure/**", ".github/workflows/azure-ci.yml", ".tflint.hcl"]
+  push:
+    branches: [main]
+    paths: ["azure/**", ".github/workflows/azure-ci.yml", ".tflint.hcl"]
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: azure
+    strategy:
+      matrix:
+        # 1.5.7: the minimum symbol-setup.sh accepts. 1.16.6: a current release, so a
+        # deprecation that would break tomorrow's Cloud Shell is seen today.
+        terraform: ["1.5.7", "1.16.6"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ matrix.terraform }}
+          terraform_wrapper: false
+
+      - name: fmt
+        run: terraform fmt -check -recursive -diff
+
+      - name: init (lock file enforced)
+        run: terraform init -backend=false -input=false -lockfile=readonly
+
+      - name: validate
+        run: terraform validate
+
+      - name: python cross-checks (connection code, roles, names)
+        if: matrix.terraform != '1.5.7'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet "pytest==8.3.5"
+          "$RUNNER_TEMP/venv/bin/python" -m pytest -q tests
+
+  shellcheck:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: shellcheck
+        run: |
+          shellcheck --version
+          shellcheck -x -S style azure/symbol-setup.sh
+          bash -n azure/symbol-setup.sh
+
+      - name: the template never enables a paid Defender plan
+        # A wizard that turned one on would hand the customer a bill they did not agree
+        # to. Checked here as well as in pytest, so a new module cannot slip one in.
+        run: |
+          if grep -rEn 'Microsoft\.Security/pricings|azurerm_security_center_subscription_pricing' \
+               azure --include='*.tf' | grep -v '^\s*#' | grep -vE ':\s*#'; then
+            echo "This template must never enable a paid Defender plan." >&2
+            exit 1
+          fi
+
+      - name: no role assignment above the subscription
+        run: |
+          if grep -rEn 'management_group|managementGroups' azure --include='*.tf' \
+               | grep -v '^\s*#' | grep -vE ':\s*#'; then
+            echo "azure-v1 is subscription-scoped: no management-group assignment." >&2
+            exit 1
+          fi
+
+  tflint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+        with:
+          tflint_version: v0.64.0
+
+      - name: tflint
+        working-directory: azure
+        run: |
+          tflint --config="$GITHUB_WORKSPACE/.tflint.hcl" --init
+          tflint --config="$GITHUB_WORKSPACE/.tflint.hcl" --recursive --format compact
+
+  checkov:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: checkov
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet "checkov==3.3.19"
+          "$RUNNER_TEMP/venv/bin/checkov" --directory azure --framework terraform --compact --quiet

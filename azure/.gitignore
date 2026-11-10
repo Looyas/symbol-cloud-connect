@@ -1,0 +1,18 @@
+# The root .gitignore excludes lock files (OCI Resource Manager resolves providers itself).
+# The Azure template commits its lock file, like the GCP one: `terraform init` in Azure
+# Cloud Shell then verifies the provider packages against these hashes
+# (linux/darwin/windows, amd64/arm64).
+#
+# GENERATE IT BEFORE THE FIRST RELEASE:
+#   cd azure && terraform providers lock \
+#     -platform=linux_amd64 -platform=linux_arm64 \
+#     -platform=darwin_amd64 -platform=darwin_arm64 -platform=windows_amd64
+# azure-ci runs `terraform init -lockfile=readonly`, which fails without it.
+!.terraform.lock.hcl
+
+# Local runs
+symbol.tfplan
+symbol-destroy.tfplan
+symbol-export.json
+__pycache__/
+.pytest_cache/

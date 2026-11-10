@@ -40,8 +40,8 @@ resource "azurerm_storage_account" "export" {
   # Symbol reads this export from OUTSIDE the customer's network -- that is what a SaaS
   # cost reader is. Both of these would make it unreadable, so neither is a finding that
   # can be fixed; the export is protected by RBAC on the container instead, scoped to one
-  # application, read-only, with the account keys disabled entirely.
-  #checkov:skip=CKV_AZURE_59:Symbol reads the export from outside the subscription; public_network_access_enabled = false would make it unreadable. Access is RBAC-only (Storage Blob Data Reader on the container), shared_access_key_enabled = false.
+  # application and read-only.
+  #checkov:skip=CKV_AZURE_59:Symbol reads the export from outside the subscription; public_network_access_enabled = false would make it unreadable. Access for Symbol is RBAC-only: Storage Blob Data Reader on the container, nothing wider.
   #checkov:skip=CKV2_AZURE_33:A private endpoint would put the export on the customer's VNet only, where Symbol cannot reach it. Same reason as CKV_AZURE_59.
   #
   # LRS is deliberate, not an oversight: Azure REGENERATES this export daily, so the
@@ -74,9 +74,31 @@ resource "azurerm_storage_account" "export" {
   https_traffic_only_enabled      = true
   min_tls_version                 = "TLS1_2"
 
-  # Symbol authenticates as symbol-finops through Entra; the account keys are not used
-  # by anything here and are one fewer credential to leak.
-  shared_access_key_enabled = false
+  # ENABLED, DELIBERATELY, AND IT WAS FALSE UNTIL azure-v1.0.1.
+  #
+  # After creating an account the azurerm provider polls the blob DATA PLANE to confirm
+  # it is ready, and that poll authenticates with the account key. With keys off it gets
+  # `403 KeyBasedAuthenticationNotPermitted` and the create fails -- leaving the account
+  # orphaned, which is what azure-v1.0.0 did.
+  #
+  # `storage_use_azuread = true` would move the poll onto the admin's own token, but
+  # Owner on a subscription does not grant blob DATA access: it would need a Storage Blob
+  # Data Contributor assignment on the account created moments earlier, racing its own
+  # propagation. The last step of a setup wizard is the wrong place for a race.
+  #
+  # Symbol never uses these keys -- it reads the container with an Entra token as
+  # symbol-finops -- the container is private, and anyone who can read the keys is
+  # already an Owner of this subscription.
+  #checkov:skip=CKV2_AZURE_40:Shared Key authorization is required for the azurerm provider to finish creating this account (see the comment above). Symbol itself reads the container with an Entra token and never a key.
+  shared_access_key_enabled = true
+
+  # The keys exist, so bound what a SAS minted from one can be: anything asking for more
+  # than a day is logged. `Log` is the only action Azure offers today -- it does not
+  # block -- but a SAS with a year on it stops being invisible.
+  sas_policy {
+    expiration_period = "01.00:00:00"
+    expiration_action = "Log"
+  }
 
   blob_properties {
     delete_retention_policy {

@@ -247,11 +247,24 @@ def test_the_export_is_focus_and_not_actualcost():
            'dataVersion = "1.0"' in finops
 
 
-def test_the_storage_account_refuses_public_access_and_shared_keys():
+def test_the_storage_account_refuses_public_blobs():
     finops = _read("modules", "finops", "main.tf")
     assert "allow_nested_items_to_be_public = false" in finops
-    assert "shared_access_key_enabled = false" in finops
-    assert 'min_tls_version                 = "TLS1_2"' in finops
+    assert re.search(r'min_tls_version\s*=\s*"TLS1_2"', finops)
+
+
+def test_the_storage_account_keeps_shared_keys_and_says_why():
+    """azure-v1.0.0 set this false and the account could not finish being created.
+
+    The azurerm provider polls the blob data plane after create, with the account key.
+    A future edit that turns it off again brings the orphaned-account bug back, so the
+    reason has to stay next to the setting.
+    """
+    finops = _read("modules", "finops", "main.tf")
+    assert re.search(r"shared_access_key_enabled\s*=\s*true", finops)
+    assert "KeyBasedAuthenticationNotPermitted" in finops
+    # And Symbol still reads it as an identity, not with a key.
+    assert '"Storage Blob Data Reader"' in finops
 
 
 # -- 5. the backend's own decoder, when it is checked out --------------------------------

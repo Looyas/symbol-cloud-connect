@@ -3,7 +3,18 @@
 All notable changes to the Azure template. Versions are `azure-vMAJOR.MINOR.PATCH` and a
 release is immutable: a published tag is never moved, and the registry pins its commit.
 
-## [azure-v1.0.0] — unreleased
+## [azure-v1.0.1] — 2026-11-10
+
+### Fixed
+
+- **The storage account could not finish being created.** `shared_access_key_enabled =
+  false` meant the azurerm provider's post-create blob data-plane poll — which uses the
+  account key — got `403 KeyBasedAuthenticationNotPermitted`, failing the apply after 21
+  of 23 resources and orphaning the account. Keys are enabled, with the reason recorded
+  beside the setting and in [SECURITY.md](SECURITY.md). Symbol still reads the container
+  with an Entra token as `Symbol Finops`; nothing uses a key.
+
+## [azure-v1.0.0] — 2026-11-10
 
 First release. Connects one Azure subscription: sign-in, FinOps, Monitoring and Security
 posture.

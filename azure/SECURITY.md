@@ -65,8 +65,24 @@ only ever shown on the setup page, while signed in to Symbol — it is never ema
 - `Azure Event Hubs Data Receiver` is scoped to the **hub**, and is receive-only.
 - Neither application holds a Microsoft Graph permission, so neither needs admin consent
   and neither can read the directory.
-- The storage account this template creates has `shared_access_key_enabled = false`:
-  Symbol authenticates with a token, and the account keys are one fewer credential to leak.
+- Symbol reads the export with an **Entra token** as `Symbol Finops`, never with an
+  account key.
+
+### The storage account keeps its access keys, and that is a trade-off
+
+`shared_access_key_enabled = false` is the better setting and azure-v1.0.0 had it. It
+could not work: after creating an account the azurerm provider polls the blob **data
+plane** to confirm it is ready, and that poll authenticates with the account key, so the
+create failed with `403 KeyBasedAuthenticationNotPermitted` and left the account
+orphaned.
+
+Moving that poll onto the admin's own token (`storage_use_azuread`) would need a Storage
+Blob Data Contributor assignment on the account created moments earlier, racing its own
+propagation — a flaky last step for a setup wizard.
+
+What the keys are worth is bounded by who can read them: someone with control-plane
+rights on the account, who is already an Owner of this subscription. The container stays
+private, public blob access is off, and Symbol's own path uses no key.
 
 ## What the template refuses to do
 

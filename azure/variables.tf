@@ -188,8 +188,20 @@ variable "create_eventhub" {
     setup at a namespace you already run -- an Event Hubs namespace has a monthly floor,
     unlike an SQS queue, so reusing one is a real saving.
 
-    The CONSUMER GROUP is created either way: two readers on one group compete for the
-    same partitions, and Symbol's checkpoint store assumes it owns its group.
+    Symbol always reads through its OWN consumer group -- two readers on one group
+    compete for the same partitions, and Symbol's checkpoint store assumes it owns its
+    group. On a reused hub no diagnostic setting is created: it is already fed, and Azure
+    refuses a second setting sending the same category to the same destination.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "create_consumer_group" {
+  description = <<-EOT
+    Create the `symbol-monitoring` consumer group. symbol-setup.sh sets it false when that
+    group already exists on a hub you pointed it at -- the manual guide creates the same
+    one -- because Terraform cannot create what already exists without an import.
   EOT
   type        = bool
   default     = true

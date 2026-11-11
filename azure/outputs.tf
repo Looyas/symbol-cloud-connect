@@ -94,8 +94,11 @@ output "symbol_connection_summary" {
     FinOps: FOCUS 1.0 export ${local.export_name_final} -> ${local.export_storage_account}/${local.export_container_final}/${local.export_directory_final}/${local.export_name_final}/${local.creates_export ? " (created by this template)" : " (your existing export)"}
       The first file appears within 24 hours. Symbol accepts the connection before then.
     %{~endif}
-    %{~if var.enable_monitoring}
-    Monitoring: Activity Log (Administrative, Security, Policy) -> ${local.eventhub_namespace_final}/${local.eventhub_name_final}, consumer group ${local.consumer_group}${local.creates_eventhub ? " (namespace created by this template)" : " (your existing namespace)"}
+    %{~if local.creates_eventhub}
+    Monitoring: Activity Log (Administrative, Security, Policy) -> ${local.eventhub_namespace_final}/${local.eventhub_name_final}, consumer group ${local.consumer_group} (created by this template)
+    %{~endif}
+    %{~if var.enable_monitoring && !local.creates_eventhub}
+    Monitoring: Symbol reads ${local.eventhub_namespace_final}/${local.eventhub_name_final} through consumer group ${local.consumer_group} (your existing namespace). Your own diagnostic setting keeps routing the Activity Log there; Symbol checks it when the code is pasted.
     %{~endif}
     %{~if var.enable_security}
     Security: Reader, Security Reader and Monitoring Reader on the subscription. Defender for Cloud is READ where you have enabled it; this template never turns a paid plan on.

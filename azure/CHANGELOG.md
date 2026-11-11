@@ -3,6 +3,22 @@
 All notable changes to the Azure template. Versions are `azure-vMAJOR.MINOR.PATCH` and a
 release is immutable: a published tag is never moved, and the registry pins its commit.
 
+## [azure-v1.0.5] — 2026-11-11
+
+### Fixed
+
+- **`--existing-eventhub` collided with what was already there.** The consumer group was
+  created unconditionally, and the manual guide creates the same `symbol-monitoring`
+  group — so connecting by hand and then running the automatic setup over the same hub
+  failed with "already exists - needs to be imported". `symbol-setup.sh` now looks first
+  and uses the group when it is there.
+- **A reused hub no longer gets a diagnostic setting.** It is already fed — that is what
+  pointing the setup at it means — and Azure refuses a second setting sending the same
+  category to the same destination. The setting is created only with a namespace this
+  template creates; connections-service checks the routing when the code is pasted.
+
+Both resources gained `count`, and `moved` blocks keep any that are already in state.
+
 ## [azure-v1.0.4] — 2026-11-10
 
 ### Fixed

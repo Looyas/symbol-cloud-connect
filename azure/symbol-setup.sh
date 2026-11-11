@@ -30,6 +30,8 @@ readonly STATE_RESOURCE_GROUP="symbol-cloud-connect-state"
 readonly STATE_CONTAINER="tfstate"
 #: Must match modules/finops/main.tf -- the preflight probes what the template writes.
 readonly COST_API_VERSION="2025-03-01"
+#: Must match local.consumer_group in main.tf and CONSUMER_GROUP in connections-service.
+readonly CONSUMER_GROUP="symbol-monitoring"
 
 # Resource providers every module needs registered. Registering one already registered
 # changes nothing.
@@ -425,6 +427,15 @@ split_export() { # account/rg/container/dir/name
     || die "--existing-export must be <storage-account>/<resource-group>/<container>/<directory>/<export-name>."
 }
 
+# Does Symbol's consumer group already exist on a hub the admin pointed us at? The
+# manual guide creates this exact group, so someone who connected by hand and now runs
+# the automatic setup over the same hub has it already -- and Terraform cannot create
+# what is already there without an import (azure-v1.0.4 failed exactly there).
+consumer_group_exists() { # namespace resource-group hub
+  az eventhubs eventhub consumer-group show --name "${CONSUMER_GROUP}" \
+    --namespace-name "$1" --resource-group "$2" --eventhub-name "$3" -o none 2>/dev/null
+}
+
 split_eventhub() { # namespace/rg/hub
   IFS='/' read -r HUB_NAMESPACE HUB_RG HUB_NAME <<<"$1"
   [[ -n "${HUB_NAMESPACE}" && -n "${HUB_RG}" && -n "${HUB_NAME}" ]] \
@@ -439,7 +450,7 @@ module_bool() { has_module "$1" && printf 'true' || printf 'false'; }
 write_var_file() {
   VAR_FILE="$(mktemp "${TMPDIR:-/tmp}/symbol-azure-XXXXXX.tfvars.json")"
 
-  local create_export="true" create_hub="true"
+  local create_export="true" create_hub="true" create_group="true"
   local export_account="" export_rg="" export_container="" export_dir="" export_name=""
   local hub_namespace="" hub_rg="" hub_name=""
 
@@ -454,6 +465,10 @@ write_var_file() {
     split_eventhub "${EXISTING_EVENTHUB}"
     create_hub="false"
     hub_namespace="${HUB_NAMESPACE}"; hub_rg="${HUB_RG}"; hub_name="${HUB_NAME}"
+    if consumer_group_exists "${hub_namespace}" "${hub_rg}" "${hub_name}"; then
+      create_group="false"
+      info "Consumer group ${CONSUMER_GROUP} already exists on ${hub_namespace}/${hub_name}: Symbol will use it"
+    fi
   fi
 
   SYMBOL_ORG="${ORG}" \
@@ -474,6 +489,7 @@ write_var_file() {
   SYMBOL_EXPORT_DIR="${export_dir}" \
   SYMBOL_EXPORT_NAME="${export_name}" \
   SYMBOL_CREATE_HUB="${create_hub}" \
+  SYMBOL_CREATE_GROUP="${create_group}" \
   SYMBOL_HUB_NAMESPACE="${hub_namespace}" \
   SYMBOL_HUB_RG="${hub_rg}" \
   SYMBOL_HUB_NAME="${hub_name}" \
@@ -504,6 +520,7 @@ values = {
     "existing_export_directory": os.environ["SYMBOL_EXPORT_DIR"],
     "existing_export_name": os.environ["SYMBOL_EXPORT_NAME"],
     "create_eventhub": flag("SYMBOL_CREATE_HUB"),
+    "create_consumer_group": flag("SYMBOL_CREATE_GROUP"),
     "existing_eventhub_namespace": os.environ["SYMBOL_HUB_NAMESPACE"],
     "existing_eventhub_resource_group": os.environ["SYMBOL_HUB_RG"],
     "existing_eventhub_name": os.environ["SYMBOL_HUB_NAME"],

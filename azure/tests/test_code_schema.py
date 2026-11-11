@@ -273,6 +273,38 @@ def test_the_hub_is_replaced_with_its_namespace():
     assert "depends_on = [azurerm_eventhub.activity]" in monitoring
 
 
+def test_a_reused_hub_gets_no_diagnostic_setting():
+    """A hub the customer points us at is already fed, and Azure refuses a second setting
+    sending the same category to the same destination."""
+    monitoring = _read("modules", "monitoring", "main.tf")
+    setting = monitoring.split('resource "azurerm_monitor_diagnostic_setting" "activity_log"', 1)[1]
+    setting = setting.split("\nresource ", 1)[0]
+    assert re.search(r"count\s*=\s*var\.create_namespace \? 1 : 0", setting)
+
+
+def test_an_existing_consumer_group_is_used_not_recreated():
+    """The manual guide creates `symbol-monitoring` too: manual-then-automatic over one hub
+    collided with it in azure-v1.0.4 ("already exists - needs to be imported")."""
+    monitoring = _read("modules", "monitoring", "main.tf")
+    group = monitoring.split('resource "azurerm_eventhub_consumer_group" "symbol"', 1)[1]
+    group = group.split("\nresource ", 1)[0]
+    assert re.search(r"count\s*=\s*var\.create_consumer_group \? 1 : 0", group)
+    script = (AZURE_DIR / "symbol-setup.sh").read_text(encoding="utf-8")
+    assert "consumer-group show" in script
+    assert '"create_consumer_group": flag("SYMBOL_CREATE_GROUP")' in script
+
+
+def test_adding_count_keeps_what_is_already_in_state():
+    """`count` renames the address; without `moved` an existing group would be destroyed
+    and recreated, resetting Symbol's position in the hub."""
+    monitoring = _read("modules", "monitoring", "main.tf")
+    for address in ("azurerm_eventhub_consumer_group.symbol",
+                    "azurerm_monitor_diagnostic_setting.activity_log"):
+        assert re.search(
+            r"from\s*=\s*%s\s*\n\s*to\s*=\s*%s\[0\]" % (re.escape(address), re.escape(address)),
+            monitoring), address
+
+
 def test_only_the_categories_the_parser_understands_are_streamed():
     monitoring = _read("modules", "monitoring", "main.tf")
     categories = set(re.findall(r'category = "([^"]+)"', monitoring))

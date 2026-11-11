@@ -33,6 +33,12 @@ variable "eventhub_name" {
   type        = string
 }
 
+variable "create_consumer_group" {
+  description = "Create Symbol's consumer group. False when it already exists on a reused hub."
+  type        = bool
+  default     = true
+}
+
 variable "consumer_group" {
   description = "Symbol's own reader group. Created whether or not the namespace is."
   type        = string

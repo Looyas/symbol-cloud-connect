@@ -186,14 +186,15 @@ module "monitoring" {
   location           = var.location
   tags               = local.tags
 
-  create_namespace    = var.create_eventhub
-  resource_group_name = local.creates_eventhub ? azurerm_resource_group.symbol[0].name : var.existing_eventhub_resource_group
-  namespace_name      = local.eventhub_namespace_final
-  eventhub_name       = local.eventhub_name_final
-  consumer_group      = local.consumer_group
-  diagnostic_name     = local.diagnostic_name
-  partition_count     = var.eventhub_partition_count
-  retention_days      = var.eventhub_retention_days
+  create_namespace      = var.create_eventhub
+  create_consumer_group = var.create_consumer_group
+  resource_group_name   = local.creates_eventhub ? azurerm_resource_group.symbol[0].name : var.existing_eventhub_resource_group
+  namespace_name        = local.eventhub_namespace_final
+  eventhub_name         = local.eventhub_name_final
+  consumer_group        = local.consumer_group
+  diagnostic_name       = local.diagnostic_name
+  partition_count       = var.eventhub_partition_count
+  retention_days        = var.eventhub_retention_days
 
   principal_id = module.identity[0].observability_object_id
 }

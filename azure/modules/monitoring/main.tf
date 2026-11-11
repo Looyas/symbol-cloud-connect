@@ -9,13 +9,20 @@
 # Data Receiver" role below. They are unrelated: no key of the customer's reaches
 # Symbol, and Symbol's identity cannot write.
 #
-# THE CONSUMER GROUP IS ALWAYS OURS
-# ---------------------------------
-# `create_namespace = false` reuses a namespace the customer already pays for, but the
-# consumer group is created either way. Event Hubs gives each group its own cursor;
-# two readers sharing `$Default` compete for the same partitions, and Symbol's
-# checkpoint store (monitoring-service: EventHubOffsetStore) assumes it owns its
-# group's offsets outright.
+# SYMBOL ALWAYS READS THROUGH ITS OWN CONSUMER GROUP
+# -------------------------------------------------
+# Event Hubs gives each group its own cursor; two readers sharing `$Default` compete for
+# the same partitions, and Symbol's checkpoint store (monitoring-service:
+# EventHubOffsetStore) assumes it owns its group's offsets outright. The group is
+# `symbol-monitoring`, created here UNLESS IT ALREADY EXISTS: the manual guide creates
+# the very same one, and symbol-setup.sh looks before planning.
+#
+# A REUSED HUB GETS NO DIAGNOSTIC SETTING FROM US
+# ----------------------------------------------
+# A hub the customer points us at is already fed -- that is what pointing us at it
+# means -- and Azure refuses a second setting sending the same category to the same
+# destination. connections-service checks the routing when the code is pasted and
+# reports in words when nothing writes there.
 ###############################################################################
 
 locals {
@@ -85,6 +92,11 @@ resource "azurerm_eventhub" "activity" {
 }
 
 resource "azurerm_eventhub_consumer_group" "symbol" {
+  # Not created when it is already there: Terraform cannot create what exists without
+  # an import, and a customer who connected through the manual guide has this exact
+  # group already. azure-v1.0.4 failed there.
+  count = var.create_consumer_group ? 1 : 0
+
   name                = var.consumer_group
   namespace_name      = var.namespace_name
   eventhub_name       = var.eventhub_name
@@ -93,6 +105,13 @@ resource "azurerm_eventhub_consumer_group" "symbol" {
   user_metadata = "Symbol monitoring-service. Do not use for another reader."
 
   depends_on = [azurerm_eventhub.activity]
+}
+
+# `count` renamed the address; this keeps a group already in state instead of
+# destroying and recreating it -- which would reset Symbol's position in the hub.
+moved {
+  from = azurerm_eventhub_consumer_group.symbol
+  to   = azurerm_eventhub_consumer_group.symbol[0]
 }
 
 ###############################################################################
@@ -104,6 +123,10 @@ resource "azurerm_eventhub_consumer_group" "symbol" {
 ###############################################################################
 
 resource "azurerm_monitor_diagnostic_setting" "activity_log" {
+  # Only with a namespace this template creates. See the header: a reused hub is already
+  # fed, and a second setting on the same categories and destination is refused.
+  count = var.create_namespace ? 1 : 0
+
   name               = var.diagnostic_name
   target_resource_id = var.subscription_scope
 
@@ -127,6 +150,11 @@ resource "azurerm_monitor_diagnostic_setting" "activity_log" {
   }
 
   depends_on = [azurerm_eventhub_consumer_group.symbol]
+}
+
+moved {
+  from = azurerm_monitor_diagnostic_setting.activity_log
+  to   = azurerm_monitor_diagnostic_setting.activity_log[0]
 }
 
 ###############################################################################

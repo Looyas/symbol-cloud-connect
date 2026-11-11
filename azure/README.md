@@ -76,15 +76,18 @@ about GuardDuty and Security Hub. The CIS scan runs without it, on Resource Grap
 | `--subscription <guid>` | the active one | Which subscription to connect |
 | `--location <region>` | `westeurope` | Where the resource group and its resources live |
 | `--existing-export <account>/<rg>/<container>/<dir>/<name>` | — | Read a FOCUS export you already run; nothing is created for FinOps. **Symbol is then granted `Storage Blob Data Reader` on that whole account**, not just the container — see [SECURITY.md](SECURITY.md) |
-| `--existing-eventhub <namespace>/<rg>/<hub>` | — | Use a namespace you already run; **only the consumer group is created** |
+| `--existing-eventhub <namespace>/<rg>/<hub>` | — | Use a namespace you already run. Symbol's consumer group is created **unless it already exists**, and **no diagnostic setting** is created — yours keeps routing the Activity Log, and Symbol checks it when the code is pasted |
 | `--secret-months <1-24>` | `12` | How long each client secret is valid |
 | `--rotate finops\|observability` | — | Replace one secret; paste the new code straight away |
 | `--destroy` | — | Remove everything this template created |
 | `--yes` | — | Skip the confirmation prompt |
 
 An Event Hubs namespace has a monthly floor of roughly ten euros, unlike an SQS queue, so
-`--existing-eventhub` is a real saving. The **consumer group** is created either way: Event
-Hubs keeps one position per group, and two readers sharing one lose each other's place.
+`--existing-eventhub` is a real saving. Symbol still reads through its **own consumer
+group**, `symbol-monitoring` — Event Hubs keeps one position per group, and two readers
+sharing one lose each other's place — created unless it is already there (the manual guide
+makes the same one). No diagnostic setting is added to a reused hub: it is already fed, and
+Azure refuses a second setting on the same categories and destination.
 
 ## What you need
 
